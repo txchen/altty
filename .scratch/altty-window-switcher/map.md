@@ -23,6 +23,9 @@ The specification must settle user behavior, window discovery and focus semantic
 
 <!-- Closed-ticket pointers are appended here. -->
 
+- [Research AltTab window model](issues/01-research-alttab-window-model.md) — Use a cached WID inventory and global MRU split across isolated WindowServer/SkyLight and AX adapters; keep real non-capture window states, omit windowless placeholders, and filter Current-App mode by invocation PID.
+- [Research platform and distribution constraints](issues/02-research-platform-and-distribution-constraints.md) — Ship a non-sandboxed, hardened and notarized universal app via versioned ZIP and Homebrew Cask; gate AX/event-tap work on Accessibility, isolate private SkyLight behavior with degradation, and validate it under the final signed identity.
+
 ## Not yet specified
 
 - Acceptance and regression coverage cannot be sliced precisely until the window model, interaction contract, and architecture are settled.
