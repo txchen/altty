@@ -2,7 +2,7 @@
 
 ## Switchable Window
 
-An individual macOS window that is eligible to appear in a switcher list. A window, rather than an application, is the fundamental selectable item.
+An individual macOS window that is eligible to appear in a switcher list. A window, rather than an application or a native tab within a window, is the fundamental selectable item.
 
 ## All-Windows Switcher
 
@@ -14,4 +14,8 @@ The switcher mode opened with Option-Grave. It lists only Switchable Windows bel
 
 ## Exception Rule
 
-A bundle-identifier-prefix rule modeled after AltTab. Its Hide behavior controls whether matching windows appear in switcher lists; its Ignore behavior controls whether global shortcuts are disabled while the matching application is frontmost. Hide and Ignore are independent behaviors, and Hide may further match window-title text.
+A bundle-identifier rule modeled after AltTab. Its Hide behavior controls whether matching real windows appear in switcher lists; its Ignore behavior controls whether global shortcuts are disabled while the matching application is frontmost. Hide and Ignore are independent; title-based and windowless-placeholder rules do not exist in Altty.
+
+## Switcher Session
+
+One interaction beginning when a switcher shortcut is invoked and ending when a selection is confirmed or the interaction is cancelled. Its mode, invoking application and ordered candidate set remain stable for the session, except that invalidated windows are removed.

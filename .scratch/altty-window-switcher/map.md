@@ -25,6 +25,9 @@ The specification must settle user behavior, window discovery and focus semantic
 
 - [Research AltTab window model](issues/01-research-alttab-window-model.md) — Use a cached WID inventory and global MRU split across isolated WindowServer/SkyLight and AX adapters; keep real non-capture window states, omit windowless placeholders, and filter Current-App mode by invocation PID.
 - [Research platform and distribution constraints](issues/02-research-platform-and-distribution-constraints.md) — Ship a non-sandboxed, hardened and notarized universal app via versioned ZIP and Homebrew Cask; gate AX/event-tap work on Accessibility, isolate private SkyLight behavior with degradation, and validate it under the final signed identity.
+- [Define switcher interaction contract](issues/03-define-switcher-interaction-contract.md) — Use window-only stable sessions over one global MRU, immediate quick switching with delayed list display, non-focusing navigation, verified focus before MRU promotion, and explicit cancellation/failure behavior.
+- [Define shortcuts and exceptions contract](issues/04-define-shortcuts-and-exceptions-contract.md) — Atomically manage one configurable binding per mode and app-identity Exceptions with independent Hide/Ignore restrictions, deterministic union semantics, empty defaults, and resilient local persistence.
+- [Prototype list and settings experience](issues/05-prototype-list-and-settings-experience.md) — Use Variant A's compact centered list and native sidebar Settings, incorporating Variant B's management-first Exceptions pane; retain the full prototype only on its throwaway branch.
 
 ## Not yet specified
 
