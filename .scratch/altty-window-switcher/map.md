@@ -30,6 +30,7 @@ The specification must settle user behavior, window discovery and focus semantic
 - [Prototype list and settings experience](issues/05-prototype-list-and-settings-experience.md) — Use Variant A's compact centered list and native sidebar Settings, incorporating Variant B's management-first Exceptions pane; retain the full prototype only on its throwaway branch.
 - [Choose technical architecture](issues/06-choose-technical-architecture.md) — Rebuild as one layered AppKit target with an actor-owned active-Space inventory, event-driven updates, SkyLight-only verified focus, atomic versioned settings and explicit lightweight performance budgets.
 - [Define release and update contract](issues/07-define-release-and-update-contract.md) — Publish immutable signed/notarized arm64 ZIPs through approval-gated GitHub Releases, update a project-owned Homebrew tap, keep identity stable, and provide only manual browser-based update checks in v1.
+- [Define acceptance and regression coverage](issues/09-define-acceptance-and-regression-coverage.md) — Gate behavior with deterministic policy/race tests, explicit macOS focus/TCC smoke tests, measurable lightweight performance budgets, tested-only OS support and build-SHA-linked signed RC verification.
 
 ## Not yet specified
 
