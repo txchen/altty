@@ -35,7 +35,11 @@ Check for Updates in the menu and About page opens the GitHub Releases latest pa
 
 ### 2026-07-13 — Stable release identity accepted
 
-Choose the permanent reverse-domain bundle ID from a domain controlled by the enrolling organization before the first formal signature; do not adopt `dev.altty.app` unless that domain is controlled. The organization's Apple Developer Team owns the Developer ID identity, and the long-term maintainer controls the GitHub release environment and Homebrew tap. Keep bundle ID, Team ID and designated requirement stable. Certificate compromise or team migration is a security event that may require renewed Accessibility consent. Development, test and nightly builds use a distinct bundle ID and cannot replace or inherit the formal app's TCC identity.
+Use `app.altty.macos` as Altty's permanent bundle ID. The organization's Apple Developer Team owns the Developer ID identity, and the long-term maintainer controls the GitHub release environment and Homebrew tap. Keep bundle ID, Team ID and designated requirement stable. Certificate compromise or team migration is a security event that may require renewed Accessibility consent. Development, test and nightly builds use a distinct bundle ID and cannot replace or inherit the formal app's TCC identity.
+
+### 2026-07-13 — Permanent bundle ID finalized
+
+The permanent production bundle ID is `app.altty.macos`. Use it for the Explicit App ID, release build configuration, `CFBundleIdentifier`, Developer ID signing, notarization and TCC lifecycle validation. Do not change it after formal distribution begins.
 
 ### 2026-07-13 — Immutable release and recovery policy accepted
 
@@ -60,7 +64,7 @@ Retain every published artifact and never replace a version. Repair defects by p
 - Submit, wait for notarization, staple, recreate the final ZIP, then verify `codesign`, Gatekeeper, architecture, entitlements and checksum before creating the GitHub Release.
 - Local scripts reproduce builds/checks but cannot bypass the formal publishing gate.
 
-Before the first formal signature, replace the temporary bundle ID with a permanent reverse-domain identifier controlled by the enrolling organization. Keep bundle ID, Team ID and designated requirement stable across releases. Development/test/nightly builds use separate identities. Certificate compromise or team migration is a security event and may require users to grant Accessibility again.
+The permanent production bundle ID is `app.altty.macos`. Keep it, the Team ID and designated requirement stable across releases. Development/test/nightly builds use separate identities. Certificate compromise or team migration is a security event and may require users to grant Accessibility again.
 
 ### Homebrew contract
 

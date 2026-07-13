@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>Altty</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.altty.app</string>
+	<string>app.altty.macos</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

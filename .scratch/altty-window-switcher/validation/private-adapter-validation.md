@@ -17,7 +17,7 @@ Partial validation completed on 2026-07-13. The Wayfinder task remains open beca
 | Accessibility | Trusted in the current responsible-process context | Probe runtime check; not final app identity |
 | Spaces/displays | One managed Space on one display during probe | Private read-only query |
 
-The intended bundle ID currently present in `Resources/Info.plist` is `dev.altty.app`. It has not been confirmed as the final registered identifier.
+The permanent production bundle ID is `app.altty.macos`, now present in `Resources/Info.plist`. It still needs to be registered as an Explicit App ID under the intended Apple Developer Team.
 
 ## Probe
 
@@ -71,7 +71,7 @@ ARCHITECTURE=x86_64 sh .scratch/altty-window-switcher/validation/private-adapter
 
 ## Exact completion checklist
 
-1. Confirm the permanent bundle ID; register it under the intended Apple Developer team.
+1. Register the permanent `app.altty.macos` bundle ID under the intended Apple Developer team.
 2. Install full Xcode and a valid Developer ID Application certificate on the build machine.
 3. Store `notarytool` credentials under a project-specific keychain profile without committing secrets.
 4. Package the probe as a minimal LSUIElement app using the final identity, hardened runtime and minimal entitlements.
