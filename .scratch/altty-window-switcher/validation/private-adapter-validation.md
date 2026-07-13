@@ -2,7 +2,7 @@
 
 ## Status
 
-Partial validation completed on 2026-07-13. The Wayfinder task remains open because this machine does not have the final Developer ID identity, notarization credentials, full Xcode, a native Intel host, macOS 26, or an explicitly initiated focus test setup.
+Partial validation completed on 2026-07-13. The Wayfinder task remains open because this machine does not have the final Developer ID identity, notarization credentials, full Xcode, macOS 26, or an explicitly initiated focus test setup. The product now supports arm64 only, so native Intel validation is no longer required.
 
 ## Environment
 
@@ -67,7 +67,6 @@ ARCHITECTURE=x86_64 sh .scratch/altty-window-switcher/validation/private-adapter
 - Homebrew versus direct-download identity and permission behavior.
 - Specific-WID focus, postcondition verification, fallback and restoration.
 - Active-Space focus, fullscreen Active Space, multiple displays and Stage Manager.
-- Native Intel hardware.
 - macOS 26 and the next developer beta.
 
 ## Exact completion checklist
@@ -80,7 +79,7 @@ ARCHITECTURE=x86_64 sh .scratch/altty-window-switcher/validation/private-adapter
 6. Run the TCC lifecycle matrix: never granted, grant, deny, retry, revoke while running, replace with a signed upgrade, move between install paths, install direct and with Homebrew.
 7. Add an explicitly user-triggered focus smoke mode that records origin/target WID and PID, performs the private focus transaction, verifies the focused target, then restores origin.
 8. Execute the focus mode on a normal and fullscreen Active Space, with one/multiple displays and Stage Manager on/off.
-9. Repeat the read-only and focus matrix natively on Intel and on the latest shipping macOS 26 release.
+9. Repeat the read-only and focus matrix on arm64 using the latest shipping macOS 26 release.
 
 ## Current architectural signal
 

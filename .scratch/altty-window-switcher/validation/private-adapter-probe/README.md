@@ -10,4 +10,4 @@ Run:
 sh .scratch/altty-window-switcher/validation/private-adapter-probe/run.sh
 ```
 
-The build is ad-hoc signed because this machine currently has no Developer ID Application identity. A successful result does not validate Developer ID notarization, Intel, other macOS releases, TCC upgrades, Homebrew installation, or focus behavior.
+The build is ad-hoc signed because this machine currently has no Developer ID Application identity. A successful result does not validate Developer ID notarization, other macOS releases, TCC upgrades, Homebrew installation, or focus behavior. Altty's release scope is arm64-only; the probe's optional architecture override is retained only for diagnostic experiments.

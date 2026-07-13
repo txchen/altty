@@ -1,5 +1,9 @@
 # Platform and distribution constraints (macOS 15+)
 
+## Subsequent product scope
+
+Later Wayfinder decisions narrow the research recommendations: Altty supports Apple silicon (`arm64`) only, maintains candidates only for the Active Space, uses SkyLight as the sole focus path, and disables switching rather than offering a public-only degraded mode. The universal/Intel, all-Space and degraded-mode material below remains research context, not the current product contract.
+
 ## Executive decision
 
 Altty can be shipped as a **non-sandboxed, hardened-runtime, Developer ID-signed and notarized menu-bar application** through a direct ZIP or DMG download and Homebrew Cask. Its public-API baseline is viable: Carbon hot-key registration does not itself require Accessibility, and a user-granted Accessibility trust decision enables cross-process AX inspection and actions. However, the product requirement to enumerate windows reliably across Spaces and focus one specific window cannot be guaranteed by Apple's public API contract. The AltTab implementation achieves those behaviors with undocumented SkyLight/CGS symbols, so Altty must treat that layer as a version-sensitive compatibility adapter, not as a supported platform capability.
