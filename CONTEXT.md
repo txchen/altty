@@ -2,7 +2,11 @@
 
 ## Switchable Window
 
-An individual macOS window that is eligible to appear in a switcher list. A window, rather than an application or a native tab within a window, is the fundamental selectable item.
+An individual macOS window on the Active Space that is eligible to appear in a switcher list. A window, rather than an application or a native tab within a window, is the fundamental selectable item.
+
+## Active Space
+
+The macOS Space currently presented to the user, including a fullscreen Space when it is active. Altty maintains Switchable Windows only for this Space and rebuilds its inventory when the Active Space changes.
 
 ## All-Windows Switcher
 

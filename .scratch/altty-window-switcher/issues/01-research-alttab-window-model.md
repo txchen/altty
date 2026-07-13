@@ -12,3 +12,5 @@ How does the current local AltTab implementation discover, qualify, order, track
 Resolved in [AltTab window model research](../research/alttab-window-model.md).
 
 AltTab maintains a long-lived, WID-keyed inventory: SkyLight/WindowServer supplies cross-Space discovery, lifecycle, geometry, Space/fullscreen state and focus events, while Accessibility supplies semantic qualification, minimized/title/tab facts and window actions. Altty should use one cached inventory and global MRU, filter the invocation-snapshotted owner PID for Current-App mode, keep minimized/hidden/fullscreen/other-Space windows eligible, omit windowless placeholders and all capture code, and isolate private discovery/focus adapters with explicit degradation policies.
+
+The cross-Space eligibility recommendation was superseded during [Choose technical architecture](06-choose-technical-architecture.md): Altty retains SkyLight as its primary discovery/focus mechanism but intentionally maintains candidates only for the active Space.

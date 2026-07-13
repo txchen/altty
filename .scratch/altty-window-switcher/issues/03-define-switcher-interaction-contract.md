@@ -14,11 +14,11 @@ What exact user-visible interaction contract should the All-Windows Switcher and
 - A macOS window is the smallest selectable unit. Native tabs are not independent candidates; focusing a tabbed window preserves its currently active tab.
 - Both modes use one global MRU. All-Windows admits every eligible window; Current-App snapshots the invoking application's PID when the shortcut begins and filters the same MRU to that owner for the whole session.
 - Each Switcher Session snapshots its ordered candidates. Newly created windows wait until the next session; invalid or closed windows are removed immediately, moving selection to the next candidate when necessary. State indicators may update, but remaining candidates do not reorder mid-session.
-- Minimized, hidden-app, fullscreen and other-Space windows remain eligible unless filtered by an Exception Rule. Windowless applications are never candidates.
+- Minimized and hidden-app windows on the active Space remain eligible unless filtered by an Exception Rule. A fullscreen Space counts as the active Space when selected. Other-Space windows and windowless applications are never candidates.
 
 ### Cold start and ordering
 
-- Before live focus history exists, seed visible-Space windows from WindowServer front-to-back order, followed by other-Space, minimized and hidden windows with stable creation-order tie-breaking.
+- Before live focus history exists, seed active-Space windows from WindowServer front-to-back order, followed by minimized and hidden windows on that Space with stable creation-order tie-breaking.
 - Real focus events progressively replace the seed order. Do not persist window MRU across process restarts.
 - List order is MRU. If the current window is present, a forward invocation selects its next item and a reverse invocation selects its previous item. If it is absent, forward selects the first item and reverse selects the last. Cycling wraps at both ends.
 
@@ -27,7 +27,7 @@ What exact user-visible interaction contract should the All-Windows Switcher and
 - Window selection begins immediately from the cached model and never waits for list rendering.
 - A quick press-and-release confirms the selected next window even if the panel never appears.
 - Delay list presentation by approximately 100–150ms to avoid flashing during a quick switch. The operation itself has no artificial delay.
-- While the long-lived model is still initializing, use a limited current-Space AX fallback rather than cancelling solely because the UI or full inventory is not ready.
+- While the long-lived model is still initializing, a limited AX discovery fallback may form candidates, but confirmation still uses the required SkyLight focus path; do not cancel solely because the UI or full inventory is not ready.
 - No candidates means no panel and no action. A sole candidate equal to the current window means no action. A sole different candidate is focused directly without a panel.
 
 ### Navigation, confirmation and cancellation

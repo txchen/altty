@@ -2,7 +2,7 @@
 
 ## Status
 
-Partial validation completed on 2026-07-13. The Wayfinder task remains open because this machine does not have the final Developer ID identity, notarization credentials, full Xcode, a native Intel host, macOS 26, or a multi-Space test setup.
+Partial validation completed on 2026-07-13. The Wayfinder task remains open because this machine does not have the final Developer ID identity, notarization credentials, full Xcode, a native Intel host, macOS 26, or an explicitly initiated focus test setup.
 
 ## Environment
 
@@ -66,7 +66,7 @@ ARCHITECTURE=x86_64 sh .scratch/altty-window-switcher/validation/private-adapter
 - Accessibility first grant, denial, retry, revocation and retention across signed upgrades.
 - Homebrew versus direct-download identity and permission behavior.
 - Specific-WID focus, postcondition verification, fallback and restoration.
-- Cross-Space focus, fullscreen Space, multiple displays, Displays Have Separate Spaces on/off and Stage Manager.
+- Active-Space focus, fullscreen Active Space, multiple displays and Stage Manager.
 - Native Intel hardware.
 - macOS 26 and the next developer beta.
 
@@ -79,9 +79,9 @@ ARCHITECTURE=x86_64 sh .scratch/altty-window-switcher/validation/private-adapter
 5. Sign, notarize, staple and download it through a quarantine-preserving route; verify with `codesign`, `spctl` and the notary log.
 6. Run the TCC lifecycle matrix: never granted, grant, deny, retry, revoke while running, replace with a signed upgrade, move between install paths, install direct and with Homebrew.
 7. Add an explicitly user-triggered focus smoke mode that records origin/target WID and PID, performs the private focus transaction, verifies the focused target, then restores origin.
-8. Execute the focus mode across current/other/fullscreen Spaces, one/multiple displays, separate-Spaces on/off and Stage Manager on/off.
+8. Execute the focus mode on a normal and fullscreen Active Space, with one/multiple displays and Stage Manager on/off.
 9. Repeat the read-only and focus matrix natively on Intel and on the latest shipping macOS 26 release.
 
 ## Current architectural signal
 
-The private adapter approach is credible on macOS 15 arm64 and under Rosetta: runtime symbol discovery and read-only Space/window queries work from a hardened process, and failure can be detected without linking private types into the domain. This evidence is sufficient to continue designing an isolated, degradable adapter, but not sufficient to claim the final distribution and permission lifecycle validated.
+The private adapter approach is credible on macOS 15 arm64 and under Rosetta: runtime symbol discovery and read-only Space/window queries work from a hardened process, and failure can be detected without linking private types into the domain. This evidence is sufficient to continue designing an isolated, fail-closed adapter, but not sufficient to claim the final distribution and permission lifecycle validated.
