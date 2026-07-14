@@ -401,8 +401,17 @@ struct InputSmokeTests {
         #expect(events.isEmpty)
     }
 
-    @Test func realDefaultSwitcherShortcutPairRegistrationDoesNotChangeSystemSettings() {
+    @Test func realDefaultSwitcherShortcutPairRegistrationDoesNotChangeSystemSettings() async throws {
         guard getenv("ALTTY_RUN_SHORTCUT_SMOKE").map({ String(cString: $0) }) == "1" else { return }
+        let environment = ProcessInfo.processInfo.environment
+        let probeAppURL = try #require(environment["ALTTY_SHORTCUT_PROBE_APP"].map(URL.init(fileURLWithPath:)))
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appending(path: "altty-shortcut-smoke-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+        let outputURL = temporaryDirectory.appending(path: "received-key-codes")
+        let readyURL = temporaryDirectory.appending(path: "ready")
+
         let input = SystemInputAdapter()
         input.install { _ in }
         #expect(input.setShortcutsEnabled(true) == .applied)
@@ -410,37 +419,28 @@ struct InputSmokeTests {
         #expect(input.setShortcutsEnabled(false) == .applied)
         #expect(!input.shortcutsEnabled)
 
-        let application = NSApplication.shared
-        application.setActivationPolicy(.accessory)
-        application.finishLaunching()
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = true
+        configuration.environment = [
+            "ALTTY_SHORTCUT_PROBE_OUTPUT": outputURL.path,
+            "ALTTY_SHORTCUT_PROBE_READY": readyURL.path,
+        ]
+        let probe = try await NSWorkspace.shared.openApplication(
+            at: probeAppURL,
+            configuration: configuration
+        )
+        defer { probe.terminate() }
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: readyURL.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(FileManager.default.fileExists(atPath: readyURL.path))
         var passedThroughKeyCodes: Set<UInt16> = []
-        for keyCode in [UInt16(kVK_Tab), UInt16(kVK_ANSI_Grave)] {
-            let down = CGEvent(
-                keyboardEventSource: nil,
-                virtualKey: CGKeyCode(keyCode),
-                keyDown: true
-            )!
-            down.flags = [.maskAlternate]
-            down.postToPid(getpid())
-            let up = CGEvent(
-                keyboardEventSource: nil,
-                virtualKey: CGKeyCode(keyCode),
-                keyDown: false
-            )!
-            up.flags = [.maskAlternate]
-            up.postToPid(getpid())
-            let deadline = Date().addingTimeInterval(0.5)
-            while let event = application.nextEvent(
-                matching: [.keyDown, .keyUp],
-                until: deadline,
-                inMode: .default,
-                dequeue: true
-            ) {
-                if event.type == .keyDown, event.keyCode == keyCode {
-                    passedThroughKeyCodes.insert(keyCode)
-                    break
-                }
-            }
+        for _ in 0..<3_000 {
+            let contents = (try? String(contentsOf: outputURL, encoding: .utf8)) ?? ""
+            passedThroughKeyCodes = Set(contents.split(separator: "\n").compactMap { UInt16($0) })
+            if passedThroughKeyCodes.count == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
         }
         #expect(passedThroughKeyCodes == [UInt16(kVK_Tab), UInt16(kVK_ANSI_Grave)])
 

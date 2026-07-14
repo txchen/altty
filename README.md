@@ -68,7 +68,9 @@ origin window before exiting. Both focus smoke tests restore their origin WID.
 
 Shortcut registration smoke testing changes no macOS shortcut preferences, but
 it does temporarily claim the configured chords. It registers and releases the
-pair, then proves a second real Carbon registrar can claim the same chords.
+pair, opens a foreground probe app that must receive physical Option-Tab and
+Option-Grave presses, and proves a second real Carbon registrar can claim the
+same chords. Focus the probe window and press both chords when prompted.
 Run it on each supported keyboard layout when Option-Tab and Option-Grave are
 free:
 

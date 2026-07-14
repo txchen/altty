@@ -14,6 +14,19 @@ fi
 
 cd "$ROOT_DIR"
 
+if [[ "${ALTTY_RUN_SHORTCUT_SMOKE:-0}" == "1" ]]; then
+  PROBE_APP="$ROOT_DIR/.build/ShortcutPassThroughProbe.app"
+  PROBE_CONTENTS="$PROBE_APP/Contents"
+  mkdir -p "$PROBE_CONTENTS/MacOS"
+  cp Tests/Fixtures/ShortcutPassThroughProbe-Info.plist "$PROBE_CONTENTS/Info.plist"
+  xcrun swiftc \
+    -parse-as-library \
+    -framework AppKit \
+    Tests/Fixtures/ShortcutPassThroughProbe.swift \
+    -o "$PROBE_CONTENTS/MacOS/ShortcutPassThroughProbe"
+  export ALTTY_SHORTCUT_PROBE_APP="$PROBE_APP"
+fi
+
 # Command Line Tools can compile Swift Testing targets but do not include the
 # xctest host. Build through SwiftPM, then link the generated objects to the
 # Swift Testing entry point so the same tests run with either CLT or Xcode.
