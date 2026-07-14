@@ -235,10 +235,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 : .reconcileActiveSpace(snapshot)
             self.run(await self.environment.engine.receiveInventory(event))
             self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
-            self.environment.windowServer.acceptInventorySnapshot(
+            guard self.environment.windowServer.acceptInventorySnapshot(
                 snapshot,
                 generation: self.inventoryGeneration
-            )
+            ) else {
+                self.receive(.windowServerChanged(.unavailable))
+                return
+            }
         }
     }
 

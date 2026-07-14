@@ -33,7 +33,10 @@ protocol WindowServerAdapter: AnyObject {
     func stopMonitoringActiveSpace()
     func startMonitoringInventory(_ onEvent: @escaping @MainActor (WindowServerInventoryEvent) -> Void)
     func stopMonitoringInventory()
-    func acceptInventorySnapshot(_ snapshot: WindowServerSnapshot, generation: InventoryGeneration)
+    func acceptInventorySnapshot(
+        _ snapshot: WindowServerSnapshot,
+        generation: InventoryGeneration
+    ) -> Bool
 }
 
 @MainActor
@@ -43,7 +46,12 @@ final class SystemWindowServerAdapter: WindowServerAdapter {
     private var eventTap: SkyLightEventTap?
 
     func availability() -> Availability {
-        guard SkyLightQuery().isAvailable, installEventTapIfNeeded() else { return .unavailable }
+        guard let snapshot = SkyLightQuery().activeSpaceSnapshot(),
+              installEventTapIfNeeded(),
+              eventTap?.subscribe(to: snapshot.windows, generation: 0) == true else {
+            return .unavailable
+        }
+        eventTap?.clearKnownWindows()
         eventTap?.isEnabled = false
         return .available
     }
@@ -92,8 +100,8 @@ final class SystemWindowServerAdapter: WindowServerAdapter {
     func acceptInventorySnapshot(
         _ snapshot: WindowServerSnapshot,
         generation: InventoryGeneration
-    ) {
-        eventTap?.subscribe(to: snapshot.windows, generation: generation)
+    ) -> Bool {
+        eventTap?.subscribe(to: snapshot.windows, generation: generation) == true
     }
 
     private func installEventTapIfNeeded() -> Bool {
@@ -231,11 +239,21 @@ private final class SkyLightEventTap: @unchecked Sendable {
         }
     }
 
-    func subscribe(to windows: [WindowServerWindow], generation: InventoryGeneration) {
-        context.takeUnretainedValue().setKnownWindows(windows, generation: generation)
+    func subscribe(
+        to windows: [WindowServerWindow],
+        generation: InventoryGeneration
+    ) -> Bool {
         var unique = Array(Set(windows.map(\.wid))).filter { $0 != 0 }
-        guard !unique.isEmpty else { return }
-        _ = requestNotifications(connection, &unique, Int32(unique.count))
+        guard !unique.isEmpty else {
+            context.takeUnretainedValue().setKnownWindows([], generation: generation)
+            return true
+        }
+        guard requestNotifications(connection, &unique, Int32(unique.count)) == 0 else {
+            context.takeUnretainedValue().setKnownWindows([], generation: 0)
+            return false
+        }
+        context.takeUnretainedValue().setKnownWindows(windows, generation: generation)
+        return true
     }
 
     func clearKnownWindows() {
@@ -292,13 +310,6 @@ private struct SkyLightQuery: Sendable {
         "SLSRegisterConnectionNotifyProc",
         "SLSRequestNotificationsForWindows",
     ]
-
-    var isAvailable: Bool {
-        withLibrary { handle in
-            guard Self.requiredSymbols.allSatisfy({ dlsym(handle, $0) != nil }) else { return false }
-            return activeSpaceSnapshot(handle: handle) != nil
-        } ?? false
-    }
 
     func activeSpaceSnapshot() -> WindowServerSnapshot? {
         withLibrary { activeSpaceSnapshot(handle: $0) } ?? nil

@@ -23,7 +23,7 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 
 ## Readiness Lifecycle
 
-- Launch checks Accessibility trust and dynamically resolves the complete required SkyLight symbol set before performing a read-only managed-Space/window query.
+- Launch checks Accessibility trust and dynamically resolves the complete required SkyLight symbol set before performing a read-only managed-Space/window query and verifying per-window event subscription. A later subscription failure transitions readiness to unsupported and fails closed.
 - Shortcuts remain unregistered until both gates are ready. Wake and explicit user rechecks fail closed before repeating both checks; ordinary application activity rechecks only Accessibility trust.
 - Accessibility prompting is reachable only through the user's Grant Accessibility action. Trust changes are observed from application/workspace activity plus a one-second observation window for up to two minutes after an explicit request or while System Settings remains active; no permission timer runs during ordinary idle use.
 - Runtime trust revocation ends the active Switcher Session boundary, unregisters shortcuts and releases AX observers.
