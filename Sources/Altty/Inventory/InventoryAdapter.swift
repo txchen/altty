@@ -10,6 +10,11 @@ struct WindowIdentity: Equatable, Hashable, Sendable {
     let generation: InventoryGeneration
 }
 
+struct FocusedWindow: Equatable, Sendable {
+    let wid: WindowID
+    let pid: ProcessID
+}
+
 struct WindowServerWindow: Equatable, Sendable {
     let wid: WindowID
     let pid: ProcessID
@@ -86,14 +91,24 @@ struct SwitchableWindow: Equatable, Sendable {
     let applicationIsHidden: Bool
     let applicationIsFrontmost: Bool
     let bundleIdentifier: String?
+
+    var identity: WindowIdentity {
+        WindowIdentity(wid: wid, pid: pid, generation: generation)
+    }
 }
 
 struct WindowInventorySnapshot: Equatable, Sendable {
     let generation: InventoryGeneration
     let activeSpaceIDs: [UInt64]
     let windows: [SwitchableWindow]
+    let focusedWindow: WindowIdentity?
 
-    static let empty = WindowInventorySnapshot(generation: 0, activeSpaceIDs: [], windows: [])
+    static let empty = WindowInventorySnapshot(
+        generation: 0,
+        activeSpaceIDs: [],
+        windows: [],
+        focusedWindow: nil
+    )
 }
 
 protocol InventoryAdapter: Sendable {
@@ -160,6 +175,7 @@ actor WindowInventory: InventoryAdapter {
     private var records: [WindowID: WindowRecord] = [:]
     private var applications: [ProcessID: ApplicationState] = [:]
     private var mostRecentFirst: [WindowIdentity] = []
+    private var focusedWindow: WindowIdentity?
     private var pendingEnrichment: Set<WindowIdentity> = []
     private var invalidatedWhileEnriching: Set<WindowIdentity> = []
     private var coldStartFrontToBack: [WindowIdentity: Int] = [:]
@@ -180,6 +196,7 @@ actor WindowInventory: InventoryAdapter {
         case let .focused(identity):
             guard records[identity.wid]?.identity == identity else { return [] }
             hasObservedFocus = true
+            focusedWindow = identity
             mostRecentFirst.removeAll { $0 == identity }
             mostRecentFirst.insert(identity, at: 0)
             return []
@@ -215,6 +232,7 @@ actor WindowInventory: InventoryAdapter {
             activeSpaceIDs = []
             records.removeAll()
             mostRecentFirst.removeAll()
+            focusedWindow = nil
             pendingEnrichment.removeAll()
             invalidatedWhileEnriching.removeAll()
             coldStartFrontToBack.removeAll()
@@ -244,7 +262,8 @@ actor WindowInventory: InventoryAdapter {
         return WindowInventorySnapshot(
             generation: generation,
             activeSpaceIDs: activeSpaceIDs,
-            windows: windows
+            windows: windows,
+            focusedWindow: focusedWindow
         )
     }
 
@@ -265,6 +284,7 @@ actor WindowInventory: InventoryAdapter {
             mostRecentFirst.append(identity)
             coldStartFrontToBack[identity] = window.frontToBackOrder
         }
+        focusedWindow = mostRecentFirst.first
         return requestEnrichment(for: mostRecentFirst)
     }
 
@@ -317,6 +337,7 @@ actor WindowInventory: InventoryAdapter {
         guard records[identity.wid]?.identity == identity else { return }
         records.removeValue(forKey: identity.wid)
         mostRecentFirst.removeAll { $0 == identity }
+        if focusedWindow == identity { focusedWindow = nil }
         pendingEnrichment.remove(identity)
         invalidatedWhileEnriching.remove(identity)
         coldStartFrontToBack.removeValue(forKey: identity)

@@ -18,6 +18,8 @@ protocol AccessibilityAdapter: AnyObject {
     func stopMonitoringAvailability()
     func releaseObservers()
     func enrichment(for identity: WindowIdentity) async -> WindowSemanticPatch
+    func deminimize(_ identity: WindowIdentity) async -> Bool
+    func focusedWindow() async -> FocusedWindow?
     func startMonitoringInventory(_ onEvent: @escaping @MainActor (AccessibilityInventoryEvent) -> Void)
     func observeApplication(pid: ProcessID)
     func stopMonitoringInventory()
@@ -106,6 +108,21 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
         await Task.detached(priority: .userInitiated) {
             AXWindowReader.semanticPatch(for: identity)
         }.value
+    }
+
+    func deminimize(_ identity: WindowIdentity) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            AXWindowReader.deminimize(identity)
+        }.value
+    }
+
+    func focusedWindow() async -> FocusedWindow? {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+        let focusedWindow = await Task.detached(priority: .userInitiated) {
+            AXWindowReader.focusedWindow(pid: pid)
+        }.value
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return nil }
+        return focusedWindow
     }
 
     func startMonitoringInventory(
@@ -275,11 +292,7 @@ private enum AXWindowReader {
     }()
 
     static func semanticPatch(for identity: WindowIdentity) -> WindowSemanticPatch {
-        let application = AXUIElementCreateApplication(identity.pid)
-        AXUIElementSetMessagingTimeout(application, 0.25)
-        guard let window = windowElements(application: application).first(where: {
-            windowID($0.element) == identity.wid
-        })?.element else {
+        guard let window = windowElement(for: identity) else {
             return WindowSemanticPatch(
                 title: .unavailable,
                 role: .unavailable,
@@ -305,6 +318,36 @@ private enum AXWindowReader {
             isFullscreen: update(fullscreen),
             isTransient: .value(transient)
         )
+    }
+
+    static func deminimize(_ identity: WindowIdentity) -> Bool {
+        guard let window = windowElement(for: identity) else { return false }
+        let minimized: Bool? = attribute(window, kAXMinimizedAttribute as CFString)
+        if minimized == false { return true }
+        guard AXUIElementSetAttributeValue(
+            window,
+            kAXMinimizedAttribute as CFString,
+            kCFBooleanFalse
+        ) == .success else { return false }
+        let updated: Bool? = attribute(window, kAXMinimizedAttribute as CFString)
+        return updated == false
+    }
+
+    static func focusedWindow(pid: ProcessID) -> FocusedWindow? {
+        guard pid > 0 else { return nil }
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.25)
+        let window: AXUIElement? = attribute(application, kAXFocusedWindowAttribute as CFString)
+        guard let window, let wid = windowID(window) else { return nil }
+        return FocusedWindow(wid: wid, pid: pid)
+    }
+
+    private static func windowElement(for identity: WindowIdentity) -> AXUIElement? {
+        let application = AXUIElementCreateApplication(identity.pid)
+        AXUIElementSetMessagingTimeout(application, 0.25)
+        return windowElements(application: application).first(where: {
+            windowID($0.element) == identity.wid
+        })?.element
     }
 
     static func windowElements(pid: ProcessID) -> [AXElementBox] {

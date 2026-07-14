@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var inventoryRefreshSequence: UInt64 = 0
     private var inventoryGeneration: InventoryGeneration = 0
     private var semanticInvalidationTasks: [WindowIdentity: Task<Void, Never>] = [:]
+    private var shortcutInvocationTask: Task<Void, Never>?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -17,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         environment.presentation.install { [weak self] command in self?.handle(command) }
+        environment.input.install { [weak self] event in self?.receive(event) }
         environment.accessibility.startMonitoringAvailability { [weak self] availability in
             self?.receive(.accessibilityChanged(availability))
         }
@@ -31,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        environment.input.setShortcutsEnabled(false)
         stopInventoryObservation()
         environment.accessibility.stopMonitoringAvailability()
         environment.accessibility.releaseObservers()
@@ -44,6 +47,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func receive(_ event: SwitcherEvent) {
         run(environment.engine.receive(event))
         refreshPresentation()
+    }
+
+    private func receive(_ event: ShortcutEvent) {
+        switch event {
+        case .allWindowsPressed:
+            shortcutInvocationTask = Task { [weak self] in
+                guard let self else { return }
+                self.run(await self.environment.engine.beginAllWindowsSwitch())
+                self.refreshPresentation()
+            }
+        case .holdModifiersReleased:
+            let invocation = shortcutInvocationTask
+            shortcutInvocationTask = nil
+            Task { [weak self] in
+                await invocation?.value
+                guard let self else { return }
+                self.run(self.environment.engine.confirmAllWindowsSwitch())
+                self.refreshPresentation()
+            }
+        }
+    }
+
+    private func receive(_ event: SwitchingEvent) {
+        Task { [weak self] in
+            guard let self else { return }
+            self.run(await self.environment.engine.receiveSwitching(event))
+            self.refreshPresentation()
+        }
     }
 
     private func run(_ effects: [SwitcherEffect]) {
@@ -83,7 +114,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.run(await self.environment.engine.receiveInventory(.clear))
                     self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
                 }
+            case let .deminimizeWindow(identity):
+                Task { [weak self] in
+                    guard let self else { return }
+                    let succeeded = await self.environment.accessibility.deminimize(identity)
+                    self.receive(.deminimizeCompleted(identity, succeeded: succeeded))
+                }
+            case let .focusWindow(identity):
+                focusTarget(identity)
+            case let .verifyFocus(identity):
+                verifyFocus(identity)
+            case let .recoverFailedFocus(target, origin):
+                recoverFailedFocus(target: target, origin: origin)
+            case let .presentSwitchingError(error):
+                environment.presentation.presentSwitchingError(error)
             }
+        }
+    }
+
+    private func focusTarget(_ identity: WindowIdentity) {
+        Task { [weak self] in
+            guard let self else { return }
+            let succeeded = await self.environment.windowServer.focus(identity)
+            self.receive(.focusCompleted(identity, succeeded: succeeded))
+        }
+    }
+
+    private func recoverFailedFocus(target: WindowIdentity, origin: WindowIdentity?) {
+        Task { [weak self] in
+            guard let self else { return }
+            if let origin { _ = await self.environment.windowServer.focus(origin) }
+            try? await Task.sleep(for: .milliseconds(100))
+            self.receive(.failedFocusRecoveryCompleted(target))
+        }
+    }
+
+    private func verifyFocus(_ identity: WindowIdentity) {
+        Task { [weak self] in
+            guard let self else { return }
+            var observed: FocusedWindow?
+            for _ in 0..<4 {
+                try? await Task.sleep(for: .milliseconds(25))
+                observed = await self.environment.accessibility.focusedWindow()
+                if observed == FocusedWindow(wid: identity.wid, pid: identity.pid) { break }
+            }
+            self.receive(.focusPostconditionObserved(observed))
         }
     }
 

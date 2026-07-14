@@ -3,6 +3,14 @@ import CoreFoundation
 import Darwin
 import Foundation
 
+private func loadDynamicSymbol<T>(
+    _ handle: UnsafeMutableRawPointer,
+    _ name: String
+) -> T? {
+    guard let symbol = dlsym(handle, name) else { return nil }
+    return unsafeBitCast(symbol, to: T.self)
+}
+
 enum ManagedDisplaySpaceTopology {
     static func currentSpaceIDs(from displays: [[String: Any]]) -> [UInt64] {
         let ids = displays.compactMap { display -> UInt64? in
@@ -29,6 +37,7 @@ enum WindowServerInventoryEvent: Equatable, Sendable {
 protocol WindowServerAdapter: AnyObject {
     func availability() -> Availability
     func activeSpaceSnapshot() async -> WindowServerSnapshot?
+    func focus(_ identity: WindowIdentity) async -> Bool
     func startMonitoringActiveSpace(_ onChange: @escaping @MainActor () -> Void)
     func stopMonitoringActiveSpace()
     func startMonitoringInventory(_ onEvent: @escaping @MainActor (WindowServerInventoryEvent) -> Void)
@@ -61,6 +70,12 @@ final class SystemWindowServerAdapter: WindowServerAdapter {
             SkyLightQuery().activeSpaceSnapshot()
         }.value
         return snapshot
+    }
+
+    func focus(_ identity: WindowIdentity) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            SkyLightFocus().focus(identity)
+        }.value
     }
 
     func startMonitoringActiveSpace(_ onChange: @escaping @MainActor () -> Void) {
@@ -221,9 +236,9 @@ private final class SkyLightEventTap: @unchecked Sendable {
 
     init?(onEvent: @escaping @Sendable (WindowServerInventoryEvent) -> Void) {
         guard let handle = dlopen(SkyLightQuery.frameworkPath, RTLD_NOW | RTLD_LOCAL),
-              let mainConnection: MainConnection = Self.load(handle, "CGSMainConnectionID"),
-              let register: RegisterNotification = Self.load(handle, "SLSRegisterConnectionNotifyProc"),
-              let request: RequestNotifications = Self.load(handle, "SLSRequestNotificationsForWindows") else {
+              let mainConnection: MainConnection = loadDynamicSymbol(handle, "CGSMainConnectionID"),
+              let register: RegisterNotification = loadDynamicSymbol(handle, "SLSRegisterConnectionNotifyProc"),
+              let request: RequestNotifications = loadDynamicSymbol(handle, "SLSRequestNotificationsForWindows") else {
             return nil
         }
         self.handle = handle
@@ -260,10 +275,6 @@ private final class SkyLightEventTap: @unchecked Sendable {
         context.takeUnretainedValue().setKnownWindows([], generation: 0)
     }
 
-    private static func load<T>(_ handle: UnsafeMutableRawPointer, _ name: String) -> T? {
-        guard let symbol = dlsym(handle, name) else { return nil }
-        return unsafeBitCast(symbol, to: T.self)
-    }
 }
 
 private struct SkyLightQuery: Sendable {
@@ -317,14 +328,14 @@ private struct SkyLightQuery: Sendable {
 
     private func activeSpaceSnapshot(handle: UnsafeMutableRawPointer) -> WindowServerSnapshot? {
         guard Self.requiredSymbols.allSatisfy({ dlsym(handle, $0) != nil }),
-              let mainConnection: MainConnection = loadSymbol(handle, "CGSMainConnectionID"),
-              let copyManagedDisplaySpaces: CopyManagedDisplaySpaces = loadSymbol(handle, "CGSCopyManagedDisplaySpaces"),
-              let copyWindows: CopyWindows = loadSymbol(handle, "CGSCopyWindowsWithOptionsAndTags"),
-              let queryWindows: QueryWindows = loadSymbol(handle, "SLSWindowQueryWindows"),
-              let copyQueryWindows: QueryResultCopyWindows = loadSymbol(handle, "SLSWindowQueryResultCopyWindows"),
-              let iteratorAdvance: IteratorAdvance = loadSymbol(handle, "SLSWindowIteratorAdvance"),
-              let iteratorGetWindowID: IteratorGetWindowID = loadSymbol(handle, "SLSWindowIteratorGetWindowID"),
-              let iteratorGetPID: IteratorGetPID = loadSymbol(handle, "SLSWindowIteratorGetPID") else {
+              let mainConnection: MainConnection = loadDynamicSymbol(handle, "CGSMainConnectionID"),
+              let copyManagedDisplaySpaces: CopyManagedDisplaySpaces = loadDynamicSymbol(handle, "CGSCopyManagedDisplaySpaces"),
+              let copyWindows: CopyWindows = loadDynamicSymbol(handle, "CGSCopyWindowsWithOptionsAndTags"),
+              let queryWindows: QueryWindows = loadDynamicSymbol(handle, "SLSWindowQueryWindows"),
+              let copyQueryWindows: QueryResultCopyWindows = loadDynamicSymbol(handle, "SLSWindowQueryResultCopyWindows"),
+              let iteratorAdvance: IteratorAdvance = loadDynamicSymbol(handle, "SLSWindowIteratorAdvance"),
+              let iteratorGetWindowID: IteratorGetWindowID = loadDynamicSymbol(handle, "SLSWindowIteratorGetWindowID"),
+              let iteratorGetPID: IteratorGetPID = loadDynamicSymbol(handle, "SLSWindowIteratorGetPID") else {
             return nil
         }
 
@@ -380,8 +391,91 @@ private struct SkyLightQuery: Sendable {
         return body(handle)
     }
 
-    private func loadSymbol<T>(_ handle: UnsafeMutableRawPointer, _ name: String) -> T? {
-        guard let pointer = dlsym(handle, name) else { return nil }
-        return unsafeBitCast(pointer, to: T.self)
+}
+
+private struct SkyLightFocus: Sendable {
+    private typealias GetProcessForPIDFunction = @convention(c) (
+        ProcessID,
+        UnsafeMutablePointer<ProcessSerialNumber>
+    ) -> OSStatus
+    private typealias SetFrontProcess = @convention(c) (
+        UnsafeMutablePointer<ProcessSerialNumber>,
+        WindowID,
+        UInt32
+    ) -> CGError
+    private typealias PostEventRecord = @convention(c) (
+        UnsafeMutablePointer<ProcessSerialNumber>,
+        UnsafeMutablePointer<UInt8>
+    ) -> CGError
+
+    private static let userGeneratedFocus: UInt32 = 0x200
+
+    private struct KeyWindowEventRecord {
+        private static let bufferSize = 0x100
+        private static let recordLengthOffset = 0x04
+        private static let recordLength: UInt8 = 0xf8
+        private static let eventTypeOffset = 0x08
+        private static let leftMouseDown: UInt8 = 0x01
+        private static let leftMouseUp: UInt8 = 0x02
+        private static let windowLocationOffset = 0x20
+        private static let windowIDOffset = 0x3c
+        private static let compatibilityFlagOffset = 0x3a
+        private static let compatibilityFlag: UInt8 = 0x10
+
+        private var bytes = [UInt8](repeating: 0, count: Self.bufferSize)
+
+        init(wid: WindowID) {
+            var wid = wid
+            var offContentPoint = CGPoint(x: -1, y: -1)
+            bytes[Self.recordLengthOffset] = Self.recordLength
+            bytes[Self.compatibilityFlagOffset] = Self.compatibilityFlag
+            bytes.withUnsafeMutableBytes { destination in
+                withUnsafeBytes(of: &wid) { source in
+                    destination.baseAddress?.advanced(by: Self.windowIDOffset)
+                        .copyMemory(from: source.baseAddress!, byteCount: source.count)
+                }
+                withUnsafeBytes(of: &offContentPoint) { source in
+                    destination.baseAddress?.advanced(by: Self.windowLocationOffset)
+                        .copyMemory(from: source.baseAddress!, byteCount: source.count)
+                }
+            }
+        }
+
+        mutating func post(
+            to psn: inout ProcessSerialNumber,
+            using postEvent: PostEventRecord
+        ) -> Bool {
+            bytes[Self.eventTypeOffset] = Self.leftMouseDown
+            let down = postEvent(&psn, &bytes)
+            bytes[Self.eventTypeOffset] = Self.leftMouseUp
+            let up = postEvent(&psn, &bytes)
+            return down == .success && up == .success
+        }
     }
+
+    func focus(_ identity: WindowIdentity) -> Bool {
+        guard identity.wid != 0, identity.pid > 0,
+              let processHandle = dlopen(nil, RTLD_NOW | RTLD_LOCAL),
+              let skyLightHandle = dlopen(SkyLightQuery.frameworkPath, RTLD_NOW | RTLD_LOCAL) else {
+            return false
+        }
+        defer {
+            dlclose(skyLightHandle)
+            dlclose(processHandle)
+        }
+        guard let getProcess: GetProcessForPIDFunction = loadDynamicSymbol(processHandle, "GetProcessForPID"),
+              let setFront: SetFrontProcess = loadDynamicSymbol(skyLightHandle, "_SLPSSetFrontProcessWithOptions"),
+              let postEvent: PostEventRecord = loadDynamicSymbol(skyLightHandle, "SLPSPostEventRecordTo") else {
+            return false
+        }
+
+        var psn = ProcessSerialNumber()
+        guard getProcess(identity.pid, &psn) == noErr,
+              setFront(&psn, identity.wid, Self.userGeneratedFocus) == .success else {
+            return false
+        }
+        var record = KeyWindowEventRecord(wid: identity.wid)
+        return record.post(to: &psn, using: postEvent)
+    }
+
 }

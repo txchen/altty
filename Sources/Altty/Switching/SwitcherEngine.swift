@@ -111,6 +111,36 @@ enum SwitcherEffect: Equatable, Sendable {
     case stopInventoryObservation
     case refreshInventory(InventoryRefreshMode)
     case clearInventory
+    case focusWindow(WindowIdentity)
+    case deminimizeWindow(WindowIdentity)
+    case verifyFocus(WindowIdentity)
+    case recoverFailedFocus(target: WindowIdentity, origin: WindowIdentity?)
+    case presentSwitchingError(SwitchingError)
+}
+
+enum SwitchingError: Equatable, Sendable {
+    case unableToSwitch
+}
+
+enum ImmediateSwitchPhase: Equatable, Sendable {
+    case waitingForModifierRelease
+    case deminimizing
+    case focusing
+    case verifying
+}
+
+struct ImmediateSwitchSession: Equatable, Sendable {
+    var candidates: [SwitchableWindow]
+    let origin: WindowIdentity?
+    var target: SwitchableWindow
+    var phase: ImmediateSwitchPhase
+}
+
+enum SwitchingEvent: Equatable, Sendable {
+    case deminimizeCompleted(WindowIdentity, succeeded: Bool)
+    case focusCompleted(WindowIdentity, succeeded: Bool)
+    case focusPostconditionObserved(FocusedWindow?)
+    case failedFocusRecoveryCompleted(WindowIdentity)
 }
 
 /// The application-service seam. It owns only value state and requested effects;
@@ -118,6 +148,8 @@ enum SwitcherEffect: Equatable, Sendable {
 @MainActor
 final class SwitcherEngine {
     private let inventory: any InventoryAdapter
+    private var suppressedFocusPromotions: Set<WindowIdentity> = []
+    private(set) var activeSwitchSession: ImmediateSwitchSession?
 
     private(set) var presentationState = SwitcherPresentationState(
         hasLaunched: false,
@@ -130,17 +162,145 @@ final class SwitcherEngine {
     }
 
     func receiveInventory(_ event: InventoryEvent) async -> [SwitcherEffect] {
+        if case let .focused(identity) = event {
+            if suppressedFocusPromotions.contains(identity) { return [] }
+            if let session = activeSwitchSession,
+               identity == session.target.identity,
+               session.phase != .waitingForModifierRelease {
+                return []
+            }
+        }
         let identities = await inventory.apply(event)
-        return identities.isEmpty ? [] : [.enrichWindows(identities)]
+        var effects: [SwitcherEffect] = identities.isEmpty ? [] : [.enrichWindows(identities)]
+        guard eventCanInvalidateCapturedCandidates(event),
+              let session = activeSwitchSession else { return effects }
+
+        let snapshot = await inventory.snapshot()
+        let liveIdentities = Set(snapshot.windows.map(\.identity))
+        if snapshot.generation != session.target.generation {
+            activeSwitchSession = nil
+            effects.append(.endActiveSession)
+            return effects
+        }
+
+        var updated = session
+        updated.candidates.removeAll { !liveIdentities.contains($0.identity) }
+        guard updated.candidates.contains(where: { $0.identity == session.target.identity }) else {
+            if session.phase == .waitingForModifierRelease {
+                activeSwitchSession = nil
+                effects.append(.endActiveSession)
+            } else {
+                effects.append(contentsOf: failActiveSwitch(session))
+            }
+            return effects
+        }
+        activeSwitchSession = updated
+        return effects
     }
 
     func inventorySnapshot() async -> WindowInventorySnapshot {
         await inventory.snapshot()
     }
 
+    func beginAllWindowsSwitch() async -> [SwitcherEffect] {
+        guard activeSwitchSession == nil else { return [] }
+        let snapshot = await inventory.snapshot()
+        let candidates = snapshot.windows
+        guard !candidates.isEmpty else { return [] }
+
+        let origin = snapshot.focusedWindow
+        if candidates.count == 1, candidates[0].identity == origin { return [] }
+
+        let target: SwitchableWindow
+        if let origin, let currentIndex = candidates.firstIndex(where: { $0.identity == origin }) {
+            target = candidates[(currentIndex + 1) % candidates.count]
+        } else {
+            target = candidates[0]
+        }
+        activeSwitchSession = ImmediateSwitchSession(
+            candidates: candidates,
+            origin: origin,
+            target: target,
+            phase: .waitingForModifierRelease
+        )
+
+        if candidates.count == 1 { return confirmAllWindowsSwitch() }
+        return []
+    }
+
+    func confirmAllWindowsSwitch() -> [SwitcherEffect] {
+        guard var session = activeSwitchSession,
+              session.phase == .waitingForModifierRelease else { return [] }
+        session.phase = session.target.isMinimized ? .deminimizing : .focusing
+        activeSwitchSession = session
+        return session.target.isMinimized
+            ? [.deminimizeWindow(session.target.identity)]
+            : [.focusWindow(session.target.identity)]
+    }
+
+    func receiveSwitching(_ event: SwitchingEvent) async -> [SwitcherEffect] {
+        if case let .failedFocusRecoveryCompleted(identity) = event {
+            suppressedFocusPromotions.remove(identity)
+            return []
+        }
+        guard var session = activeSwitchSession else { return [] }
+        switch event {
+        case let .deminimizeCompleted(identity, succeeded):
+            guard session.phase == .deminimizing,
+                  identity == session.target.identity else { return [] }
+            guard succeeded else { return failActiveSwitch(session) }
+            session.phase = .focusing
+            activeSwitchSession = session
+            return [.focusWindow(identity)]
+        case let .focusCompleted(identity, succeeded):
+            guard session.phase == .focusing,
+                  identity == session.target.identity else { return [] }
+            guard succeeded else { return failActiveSwitch(session) }
+            session.phase = .verifying
+            activeSwitchSession = session
+            return [.verifyFocus(identity)]
+        case let .focusPostconditionObserved(observed):
+            guard session.phase == .verifying else { return [] }
+            guard observed == FocusedWindow(
+                wid: session.target.wid,
+                pid: session.target.pid
+            ) else { return failActiveSwitch(session) }
+            _ = await inventory.apply(.focused(session.target.identity))
+            activeSwitchSession = nil
+            return [.endActiveSession]
+        case .failedFocusRecoveryCompleted:
+            return []
+        }
+    }
+
+    private func failActiveSwitch(_ session: ImmediateSwitchSession) -> [SwitcherEffect] {
+        activeSwitchSession = nil
+        suppressedFocusPromotions.insert(session.target.identity)
+        let origin = session.origin == session.target.identity ? nil : session.origin
+        return [
+            .endActiveSession,
+            .recoverFailedFocus(target: session.target.identity, origin: origin),
+            .presentSwitchingError(.unableToSwitch),
+        ]
+    }
+
+    private func eventCanInvalidateCapturedCandidates(_ event: InventoryEvent) -> Bool {
+        switch event {
+        case .replaceActiveSpace, .reconcileActiveSpace, .created, .destroyed, .clear:
+            true
+        case .workspaceChanged(.terminated):
+            true
+        case .focused, .semanticsInvalidated, .semanticsChanged,
+             .workspaceChanged(.snapshot), .workspaceChanged(.launched),
+             .workspaceChanged(.hidden), .workspaceChanged(.activated):
+            false
+        }
+    }
+
     func send(_ command: SwitcherCommand) -> [SwitcherEffect] {
         switch command {
         case .launch:
+            activeSwitchSession = nil
             presentationState = SwitcherPresentationState(
                 hasLaunched: true,
                 accessibility: .unknown,
@@ -165,6 +325,7 @@ final class SwitcherEngine {
     }
 
     private func beginReadinessCheck() -> [SwitcherEffect] {
+        activeSwitchSession = nil
         presentationState = SwitcherPresentationState(
             hasLaunched: presentationState.hasLaunched,
             accessibility: .unknown,
@@ -203,6 +364,7 @@ final class SwitcherEngine {
             && presentationState.accessibility == .unavailable
 
         if previousState.isReady && !presentationState.isReady || accessibilityWasRevoked {
+            activeSwitchSession = nil
             effects.append(.setShortcutsEnabled(false))
             effects.append(.endActiveSession)
             effects.append(.stopInventoryObservation)

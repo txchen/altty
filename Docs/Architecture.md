@@ -40,5 +40,5 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 
 ## Current Constraints
 
-- Shortcut registration and concrete switching sessions arrive in later implementation tickets; tickets 11–12 establish their fail-closed lifecycle and inventory boundaries.
+- The default Option-Tab path performs immediate All-Windows selection and verified exact-WID focus. Delayed panel presentation, repeated navigation and longer interactive sessions arrive in later implementation tickets.
 - No thumbnails are supported by design.
