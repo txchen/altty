@@ -117,6 +117,7 @@ enum ShortcutConfigurationError: Error, Equatable, Sendable {
     case shiftIsReserved(SwitcherMode)
     case duplicateBindings
     case unavailableShortcut(SwitcherMode)
+    case shortcutReplacementFailed
     case inputMonitoringUnavailable
     case couldNotSaveSettings
 
@@ -132,6 +133,8 @@ enum ShortcutConfigurationError: Error, Equatable, Sendable {
             "All-Windows and Current-App must use different shortcuts."
         case let .unavailableShortcut(mode):
             "The \(mode.title) shortcut is unavailable. Your previous shortcuts are still active."
+        case .shortcutReplacementFailed:
+            "The shortcut pair could not be replaced. Your previous shortcuts are still active."
         case .inputMonitoringUnavailable:
             "Keyboard monitoring is unavailable. Altty shortcuts have been unregistered so the keys pass through."
         case .couldNotSaveSettings:

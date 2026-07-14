@@ -410,6 +410,40 @@ struct InputSmokeTests {
         #expect(input.setShortcutsEnabled(false) == .applied)
         #expect(!input.shortcutsEnabled)
 
+        let application = NSApplication.shared
+        application.setActivationPolicy(.accessory)
+        application.finishLaunching()
+        var passedThroughKeyCodes: Set<UInt16> = []
+        for keyCode in [UInt16(kVK_Tab), UInt16(kVK_ANSI_Grave)] {
+            let down = CGEvent(
+                keyboardEventSource: nil,
+                virtualKey: CGKeyCode(keyCode),
+                keyDown: true
+            )!
+            down.flags = [.maskAlternate]
+            down.postToPid(getpid())
+            let up = CGEvent(
+                keyboardEventSource: nil,
+                virtualKey: CGKeyCode(keyCode),
+                keyDown: false
+            )!
+            up.flags = [.maskAlternate]
+            up.postToPid(getpid())
+            let deadline = Date().addingTimeInterval(0.5)
+            while let event = application.nextEvent(
+                matching: [.keyDown, .keyUp],
+                until: deadline,
+                inMode: .default,
+                dequeue: true
+            ) {
+                if event.type == .keyDown, event.keyCode == keyCode {
+                    passedThroughKeyCodes.insert(keyCode)
+                    break
+                }
+            }
+        }
+        #expect(passedThroughKeyCodes == [UInt16(kVK_Tab), UInt16(kVK_ANSI_Grave)])
+
         let receiver = SystemInputAdapter()
         receiver.install { _ in }
         #expect(receiver.setShortcutsEnabled(true) == .applied)

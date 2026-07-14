@@ -141,8 +141,8 @@ struct ShortcutConfigurationTests {
             )
         )
 
-        #expect(input.replaceShortcuts(proposed) == .failure(.inputMonitoringUnavailable))
-        #expect(!input.shortcutsEnabled)
+        #expect(input.replaceShortcuts(proposed) == .failure(.shortcutReplacementFailed))
+        #expect(input.shortcutsEnabled)
         #expect(registrar.registrations == previousRegistrations)
         #expect(input.setShortcutsEnabled(false) == .applied)
         #expect(registrar.registrations.isEmpty)

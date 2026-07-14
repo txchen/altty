@@ -238,6 +238,9 @@ final class SystemInputAdapter: InputAdapter {
                         && failedRestorations.contains($0.hotKey.id)
                 }
                 activeRegistrations.append(contentsOf: proposedStillRegistered)
+                if proposedStillRegistered.isEmpty && failedRestorations.isEmpty {
+                    return .failure(.shortcutReplacementFailed)
+                }
                 shortcutsEnabled = false
                 return .failure(.inputMonitoringUnavailable)
             }

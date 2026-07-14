@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var inventoryGeneration: InventoryGeneration = 0
     private var semanticInvalidationTasks: [WindowIdentity: Task<Void, Never>] = [:]
     private var shortcutInvocationTask: Task<Void, Never>?
+    private var shortcutCleanupTask: Task<Void, Never>?
     private var switcherPanelTask: Task<Void, Never>?
 
     init(environment: AppEnvironment) {
@@ -39,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         shortcutInvocationTask?.cancel()
+        shortcutCleanupTask?.cancel()
         switcherPanelTask?.cancel()
         environment.presentation.dismissSwitcherPanel()
         environment.input.setShortcutsEnabled(false)
@@ -170,13 +172,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case let .failure(error):
                     run(environment.engine.receiveShortcutRegistration(.failed(pair, error)))
                     if error == .inputMonitoringUnavailable {
-                        _ = environment.input.setShortcutsEnabled(false)
+                        scheduleShortcutCleanupRetry()
                     }
                 }
                 refreshPresentation()
             case let .rollbackShortcuts(pair):
                 if case let .failure(error) = environment.input.replaceShortcuts(pair) {
                     run(environment.engine.receiveShortcutRegistration(.failed(pair, error)))
+                    scheduleShortcutCleanupRetry()
                 }
                 refreshPresentation()
             case let .persistSettings(snapshot):
@@ -203,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     environment.input.configuredShortcuts,
                     error
                 )))
+                scheduleShortcutCleanupRetry()
             }
             return
         }
@@ -254,6 +258,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 unavailable,
                 defaultError
             )))
+        }
+    }
+
+    private func scheduleShortcutCleanupRetry() {
+        shortcutCleanupTask?.cancel()
+        shortcutCleanupTask = Task { [weak self] in
+            for delay in [50, 150, 300] {
+                do {
+                    try await Task.sleep(for: .milliseconds(delay))
+                } catch {
+                    return
+                }
+                guard let self else { return }
+                if self.environment.input.setShortcutsEnabled(false) == .applied {
+                    self.shortcutCleanupTask = nil
+                    return
+                }
+            }
+            self?.shortcutCleanupTask = nil
         }
     }
 
