@@ -32,6 +32,7 @@ The specification must settle user behavior, window discovery and focus semantic
 - [Define release and update contract](issues/07-define-release-and-update-contract.md) — Publish immutable signed/notarized arm64 ZIPs with permanent bundle ID `app.altty.macos` through approval-gated GitHub Releases, update a project-owned Homebrew tap, and provide only manual browser-based update checks in v1.
 - [Define acceptance and regression coverage](issues/09-define-acceptance-and-regression-coverage.md) — Gate behavior with deterministic policy/race tests, explicit macOS focus/TCC smoke tests, measurable lightweight performance budgets, tested-only OS support and build-SHA-linked signed RC verification.
 - [Add the Current-App Switcher](issues/15-add-current-app-switcher.md) — Register Option-Grave alongside Option-Tab and run both modes through the shared session engine, with Current-App filtering the global MRU by an invocation-snapshotted frontmost PID and deterministic cross-mode interruption.
+- [Configure shortcuts atomically](issues/16-configure-shortcuts-atomically.md) — Provide one validated binding per mode, atomically replace the full Carbon registration pair with rollback on conflicts, defer edits across active sessions, and persist versioned shortcut settings with safe recovery.
 
 ## Not yet specified
 

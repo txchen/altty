@@ -405,9 +405,10 @@ struct InputSmokeTests {
         guard getenv("ALTTY_RUN_SHORTCUT_SMOKE").map({ String(cString: $0) }) == "1" else { return }
         let input = SystemInputAdapter()
         input.install { _ in }
-        input.setShortcutsEnabled(true)
+        #expect(input.setShortcutsEnabled(true) == .applied)
         #expect(input.shortcutsEnabled)
-        input.setShortcutsEnabled(false)
+        #expect(input.setShortcutsEnabled(false) == .applied)
+        #expect(!input.shortcutsEnabled)
     }
 }
 
@@ -1507,6 +1508,7 @@ struct SwitcherPanelTests {
         let second = window(wid: 20, title: "Second", hidden: true, fullscreen: true)
         let state = SwitcherPanelState(
             mode: .allWindows,
+            shortcutDescription: "⌥Tab",
             rows: [first, second],
             selectedIdentity: second.identity
         )

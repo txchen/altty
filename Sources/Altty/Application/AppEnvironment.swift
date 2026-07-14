@@ -16,16 +16,22 @@ struct AppEnvironment {
 
     static func production() -> AppEnvironment {
         let inventory = WindowInventory()
+        let persistence = FileSettingsPersistenceAdapter()
+        let settings = persistence.loadSettings()
         return AppEnvironment(
-            engine: SwitcherEngine(inventory: inventory),
-            input: SystemInputAdapter(),
+            engine: SwitcherEngine(
+                inventory: inventory,
+                shortcuts: settings.snapshot.shortcuts,
+                settingsWarning: settings.warning?.message
+            ),
+            input: SystemInputAdapter(shortcuts: settings.snapshot.shortcuts),
             windowServer: SystemWindowServerAdapter(),
             accessibility: SystemAccessibilityAdapter(),
             workspace: SystemWorkspaceAdapter(),
             inventory: inventory,
             switching: SystemSwitchingAdapter(),
             exceptions: DefaultExceptionsAdapter(),
-            persistence: UserDefaultsPersistenceAdapter(),
+            persistence: persistence,
             presentation: AppKitPresentationAdapter(),
             diagnostics: UnifiedLogDiagnosticsAdapter()
         )

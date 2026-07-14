@@ -66,12 +66,22 @@ The smoke test sends Option-Grave twice while Option remains held, verifies
 that the third WID is promoted in the shared MRU, and restores the fixture's
 origin window before exiting. Both focus smoke tests restore their origin WID.
 
+Shortcut registration smoke testing changes no macOS shortcut preferences, but
+it does temporarily claim the configured chords. Run it only when Option-Tab
+and Option-Grave are free on the current keyboard layout:
+
+```sh
+ALTTY_RUN_SHORTCUT_SMOKE=1 \
+scripts/test.sh --filter realDefaultSwitcherShortcutPairRegistrationDoesNotChangeSystemSettings
+```
+
 ## Current foundation
 
 - Menu bar app
 - Settings window
 - Fail-closed readiness and recovery for Accessibility and SkyLight capability
 - Event-driven, generation-safe Active Space window inventory with lazy AX enrichment
+- Atomic configurable All-Windows and Current-App shortcut recorders with versioned local persistence
 - General, Shortcuts, Exceptions and About settings destinations
 - Replaceable system-adapter boundaries assembled around `SwitcherEngine`
 - No thumbnails and no Screen Recording permission

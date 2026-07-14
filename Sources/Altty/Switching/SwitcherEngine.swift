@@ -15,6 +15,12 @@ struct SwitcherPresentationState: Equatable, Sendable {
     let hasLaunched: Bool
     let accessibility: Availability
     let windowServer: Availability
+    var shortcutSettings = ShortcutSettingsState(
+        current: .defaults,
+        pending: nil,
+        error: nil,
+        recoveryWarning: nil
+    )
 
     var isReady: Bool { accessibility == .available && windowServer == .available }
 
@@ -83,6 +89,7 @@ enum SwitcherCommand: Equatable, Sendable {
     case checkForUpdates
     case quit
     case recheckReadiness
+    case updateShortcut(SwitcherMode, ShortcutBinding)
 }
 
 enum SwitcherEvent: Equatable, Sendable {
@@ -119,6 +126,8 @@ enum SwitcherEffect: Equatable, Sendable {
     case scheduleSwitcherPanel(delayMilliseconds: Int)
     case showSwitcherPanel(SwitcherPanelState)
     case updateSwitcherPanel(SwitcherPanelState)
+    case replaceShortcuts(ShortcutPair)
+    case persistSettings(SettingsSnapshot)
 }
 
 enum SwitchingError: Equatable, Sendable {
@@ -129,15 +138,12 @@ enum SwitcherMode: Equatable, Sendable {
     case allWindows
     case currentApp
 
-    private var presentation: (title: String, shortcutDescription: String) {
+    var title: String {
         switch self {
-        case .allWindows: ("All Windows", "⌥Tab")
-        case .currentApp: ("Current App", "⌥`")
+        case .allWindows: "All Windows"
+        case .currentApp: "Current App"
         }
     }
-
-    var title: String { presentation.title }
-    var shortcutDescription: String { presentation.shortcutDescription }
 }
 
 enum SwitchDirection: Equatable, Sendable {
@@ -173,11 +179,11 @@ struct SystemSwitcherClock: SwitcherClock {
 
 struct SwitcherPanelState: Equatable, Sendable {
     let mode: SwitcherMode
+    let shortcutDescription: String
     let rows: [SwitcherPanelRow]
     let selectedIdentity: WindowIdentity
 
     var title: String { mode.title }
-    var shortcutDescription: String { mode.shortcutDescription }
 }
 
 struct SwitcherPanelRow: Equatable, Sendable {
@@ -199,6 +205,7 @@ enum SwitcherSessionPhase: Equatable, Sendable {
 
 struct SwitcherSession: Equatable, Sendable {
     let mode: SwitcherMode
+    let shortcutDescription: String
     let invocationPID: ProcessID?
     var candidates: [SwitchableWindow]
     let origin: WindowIdentity?
@@ -212,6 +219,7 @@ struct SwitcherSession: Equatable, Sendable {
     var panelState: SwitcherPanelState {
         SwitcherPanelState(
             mode: mode,
+            shortcutDescription: shortcutDescription,
             rows: candidates.map { candidate in
                 SwitcherPanelRow(
                     identity: candidate.identity,
@@ -254,10 +262,18 @@ final class SwitcherEngine {
 
     init(
         inventory: any InventoryAdapter = WindowInventory(),
-        clock: any SwitcherClock = SystemSwitcherClock()
+        clock: any SwitcherClock = SystemSwitcherClock(),
+        shortcuts: ShortcutPair = .defaults,
+        settingsWarning: String? = nil
     ) {
         self.inventory = inventory
         self.clock = clock
+        presentationState.shortcutSettings = ShortcutSettingsState(
+            current: shortcuts,
+            pending: nil,
+            error: nil,
+            recoveryWarning: settingsWarning
+        )
     }
 
     func receiveInventory(_ event: InventoryEvent) async -> [SwitcherEffect] {
@@ -274,8 +290,7 @@ final class SwitcherEngine {
         if let session = activeSwitchSession,
            session.phase == .waitingForModifierRelease,
            eventLosesInteractionContext(event, session: session) {
-            activeSwitchSession = nil
-            effects.append(.endActiveSession)
+            effects.append(contentsOf: endSessionEffects())
             return effects
         }
         guard eventCanInvalidateCapturedCandidates(event),
@@ -284,8 +299,7 @@ final class SwitcherEngine {
         let snapshot = await inventory.snapshot()
         let liveIdentities = Set(snapshot.windows.map(\.identity))
         if snapshot.generation != session.target.generation {
-            activeSwitchSession = nil
-            effects.append(.endActiveSession)
+            effects.append(contentsOf: endSessionEffects())
             return effects
         }
 
@@ -295,8 +309,7 @@ final class SwitcherEngine {
         updated.candidates.removeAll { !liveIdentities.contains($0.identity) }
         if session.phase == .waitingForModifierRelease {
             guard !updated.candidates.isEmpty else {
-                activeSwitchSession = nil
-                effects.append(.endActiveSession)
+                effects.append(contentsOf: endSessionEffects())
                 return effects
             }
             updated.selectedIndex = updated.candidates.firstIndex {
@@ -360,6 +373,8 @@ final class SwitcherEngine {
         }
         activeSwitchSession = SwitcherSession(
             mode: mode,
+            shortcutDescription: presentationState.shortcutSettings.current
+                .binding(for: mode).displayName,
             invocationPID: invocationPID,
             candidates: candidates,
             origin: origin,
@@ -425,8 +440,7 @@ final class SwitcherEngine {
             }
             return confirmSwitch()
         case .cancel:
-            activeSwitchSession = nil
-            return [.endActiveSession]
+            return endSessionEffects()
         }
     }
 
@@ -468,22 +482,19 @@ final class SwitcherEngine {
                 pid: session.target.pid
             ) else { return failActiveSwitch(session) }
             _ = await inventory.apply(.focused(session.target.identity))
-            activeSwitchSession = nil
-            return [.endActiveSession]
+            return endSessionEffects()
         case .failedFocusRecoveryCompleted:
             return []
         }
     }
 
     private func failActiveSwitch(_ session: SwitcherSession) -> [SwitcherEffect] {
-        activeSwitchSession = nil
         suppressedFocusPromotions.insert(session.target.identity)
         let origin = session.origin == session.target.identity ? nil : session.origin
-        return [
-            .endActiveSession,
+        return endSessionEffects(additional: [
             .recoverFailedFocus(target: session.target.identity, origin: origin),
             .presentSwitchingError(.unableToSwitch),
-        ]
+        ])
     }
 
     private func eventCanInvalidateCapturedCandidates(_ event: InventoryEvent) -> Bool {
@@ -516,11 +527,13 @@ final class SwitcherEngine {
     func send(_ command: SwitcherCommand) -> [SwitcherEffect] {
         switch command {
         case .launch:
+            let shortcutSettings = presentationState.shortcutSettings
             activeSwitchSession = nil
             presentationState = SwitcherPresentationState(
                 hasLaunched: true,
                 accessibility: .unknown,
-                windowServer: .unknown
+                windowServer: .unknown,
+                shortcutSettings: shortcutSettings
             )
             return [.setShortcutsEnabled(false), .checkAccessibility, .checkWindowServer]
         case .accessibilityStatusMayHaveChanged:
@@ -537,24 +550,82 @@ final class SwitcherEngine {
             return [.terminate]
         case .recheckReadiness:
             return beginReadinessCheck()
+        case let .updateShortcut(mode, binding):
+            return updateShortcut(mode: mode, binding: binding)
         }
     }
 
-    private func beginReadinessCheck() -> [SwitcherEffect] {
+    func receiveShortcutRegistration(_ event: ShortcutRegistrationEvent) -> [SwitcherEffect] {
+        switch event {
+        case let .applied(pair):
+            presentationState.shortcutSettings.current = pair
+            presentationState.shortcutSettings.pending = nil
+            presentationState.shortcutSettings.error = nil
+            presentationState.shortcutSettings.recoveryWarning = nil
+            return [.persistSettings(SettingsSnapshot(shortcuts: pair))]
+        case let .failed(pair, error):
+            if presentationState.shortcutSettings.pending == pair {
+                presentationState.shortcutSettings.pending = nil
+            }
+            presentationState.shortcutSettings.error = error
+            return []
+        }
+    }
+
+    func receiveShortcutPersistenceFailure() {
+        presentationState.shortcutSettings.error = .couldNotSaveSettings
+    }
+
+    private func updateShortcut(
+        mode: SwitcherMode,
+        binding: ShortcutBinding
+    ) -> [SwitcherEffect] {
+        let current = presentationState.shortcutSettings.current
+        let pair = switch mode {
+        case .allWindows:
+            ShortcutPair(allWindows: binding, currentApp: current.currentApp)
+        case .currentApp:
+            ShortcutPair(allWindows: current.allWindows, currentApp: binding)
+        }
+        if let error = pair.validationError {
+            presentationState.shortcutSettings.pending = nil
+            presentationState.shortcutSettings.error = error
+            return []
+        }
+        presentationState.shortcutSettings.pending = pair
+        presentationState.shortcutSettings.error = nil
+        return activeSwitchSession == nil ? [.replaceShortcuts(pair)] : []
+    }
+
+    private func endSessionEffects(
+        additional: [SwitcherEffect] = []
+    ) -> [SwitcherEffect] {
         activeSwitchSession = nil
+        var effects: [SwitcherEffect] = [.endActiveSession]
+        effects.append(contentsOf: additional)
+        if let pending = presentationState.shortcutSettings.pending {
+            effects.append(.replaceShortcuts(pending))
+        }
+        return effects
+    }
+
+    private func beginReadinessCheck() -> [SwitcherEffect] {
+        let shortcutSettings = presentationState.shortcutSettings
         presentationState = SwitcherPresentationState(
             hasLaunched: presentationState.hasLaunched,
             accessibility: .unknown,
-            windowServer: .unknown
+            windowServer: .unknown,
+            shortcutSettings: shortcutSettings
         )
-        return [
-            .setShortcutsEnabled(false),
-            .endActiveSession,
+        var effects: [SwitcherEffect] = [.setShortcutsEnabled(false)]
+        effects.append(contentsOf: endSessionEffects())
+        effects.append(contentsOf: [
             .stopInventoryObservation,
             .clearInventory,
             .checkAccessibility,
             .checkWindowServer,
-        ]
+        ])
+        return effects
     }
 
     func receive(_ event: SwitcherEvent) -> [SwitcherEffect] {
@@ -564,13 +635,15 @@ final class SwitcherEngine {
             presentationState = SwitcherPresentationState(
                 hasLaunched: presentationState.hasLaunched,
                 accessibility: value,
-                windowServer: presentationState.windowServer
+                windowServer: presentationState.windowServer,
+                shortcutSettings: presentationState.shortcutSettings
             )
         case let .windowServerChanged(value):
             presentationState = SwitcherPresentationState(
                 hasLaunched: presentationState.hasLaunched,
                 accessibility: presentationState.accessibility,
-                windowServer: value
+                windowServer: value,
+                shortcutSettings: presentationState.shortcutSettings
             )
         }
         guard previousState != presentationState else { return [] }
@@ -580,9 +653,8 @@ final class SwitcherEngine {
             && presentationState.accessibility == .unavailable
 
         if previousState.isReady && !presentationState.isReady || accessibilityWasRevoked {
-            activeSwitchSession = nil
             effects.append(.setShortcutsEnabled(false))
-            effects.append(.endActiveSession)
+            effects.append(contentsOf: endSessionEffects())
             effects.append(.stopInventoryObservation)
             effects.append(.clearInventory)
             if accessibilityWasRevoked {

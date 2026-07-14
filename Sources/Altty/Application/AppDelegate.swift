@@ -106,7 +106,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .checkWindowServer:
                 receive(.windowServerChanged(environment.windowServer.availability()))
             case let .setShortcutsEnabled(enabled):
-                environment.input.setShortcutsEnabled(enabled)
+                let result = environment.input.setShortcutsEnabled(enabled)
+                if case let .failure(error) = result {
+                    run(environment.engine.receiveShortcutRegistration(.failed(
+                        environment.input.configuredShortcuts,
+                        error
+                    )))
+                }
             case .endActiveSession:
                 switcherPanelTask?.cancel()
                 switcherPanelTask = nil
@@ -160,6 +166,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 environment.presentation.showSwitcherPanel(state: state)
             case let .updateSwitcherPanel(state):
                 environment.presentation.updateSwitcherPanel(state: state)
+            case let .replaceShortcuts(pair):
+                let result = environment.input.replaceShortcuts(pair)
+                switch result {
+                case .applied:
+                    run(environment.engine.receiveShortcutRegistration(.applied(pair)))
+                case let .failure(error):
+                    run(environment.engine.receiveShortcutRegistration(.failed(pair, error)))
+                }
+                refreshPresentation()
+            case let .persistSettings(snapshot):
+                do {
+                    try environment.persistence.saveSettings(snapshot)
+                } catch {
+                    environment.engine.receiveShortcutPersistenceFailure()
+                    refreshPresentation()
+                }
             }
         }
     }

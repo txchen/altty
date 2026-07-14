@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 @MainActor
 final class SettingsWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
@@ -8,7 +9,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let detail: String
 
         static let general = Pane(title: "General", symbol: "gearshape", detail: "Altty remains available from the menu bar while required system access is unavailable.")
-        static let shortcuts = Pane(title: "Shortcuts", symbol: "keyboard", detail: "Shortcut configuration will be available in a later build.")
+        static let shortcuts = Pane(title: "Shortcuts", symbol: "keyboard", detail: "Choose one shortcut per switcher. Hold Shift with either shortcut to navigate in reverse.")
         static let exceptions = Pane(title: "Exceptions", symbol: "list.bullet.rectangle", detail: "Application exception rules will be available in a later build.")
         static let about = Pane(title: "About", symbol: "info.circle", detail: "Altty is a private, title-list window switcher for macOS 15.")
         static let all = [general, shortcuts, exceptions, about]
@@ -24,6 +25,20 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let recheckButton = NSButton(title: "Check Readiness", target: nil, action: #selector(recheck))
     private let contentContainer = NSView()
     private let sidebar = NSTableView()
+    private let shortcutErrorLabel = NSTextField(wrappingLabelWithString: "")
+    private let shortcutPendingLabel = NSTextField(labelWithString: "")
+    private lazy var allWindowsRecorder = ShortcutRecorderControl(
+        mode: .allWindows,
+        binding: ShortcutPair.defaults.allWindows
+    ) { [weak self] mode, binding in
+        self?.onCommand(.updateShortcut(mode, binding))
+    }
+    private lazy var currentAppRecorder = ShortcutRecorderControl(
+        mode: .currentApp,
+        binding: ShortcutPair.defaults.currentApp
+    ) { [weak self] mode, binding in
+        self?.onCommand(.updateShortcut(mode, binding))
+    }
 
     init(onCommand: @escaping (SwitcherCommand) -> Void) {
         self.onCommand = onCommand
@@ -58,6 +73,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         skyLightStatusLabel.stringValue = state.skyLightStatusTitle
         skyLightDetailLabel.stringValue = state.skyLightDetail
         accessibilityButton.isHidden = !state.showsAccessibilityAction
+        updateShortcuts(state.shortcutSettings)
     }
 
     private func configureSidebar(on window: NSWindow) {
@@ -128,6 +144,24 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             stack.addArrangedSubview(skyLightStatusLabel)
             stack.addArrangedSubview(skyLightDetailLabel)
             stack.addArrangedSubview(recheckButton)
+        } else if pane == .shortcuts {
+            stack.addArrangedSubview(shortcutRow(
+                title: SwitcherMode.allWindows.title,
+                recorder: allWindowsRecorder,
+                defaultBinding: ShortcutPair.defaults.allWindows
+            ))
+            stack.addArrangedSubview(shortcutRow(
+                title: SwitcherMode.currentApp.title,
+                recorder: currentAppRecorder,
+                defaultBinding: ShortcutPair.defaults.currentApp
+            ))
+            shortcutPendingLabel.textColor = .secondaryLabelColor
+            shortcutPendingLabel.font = .systemFont(ofSize: 12)
+            shortcutErrorLabel.textColor = .systemRed
+            shortcutErrorLabel.font = .systemFont(ofSize: 12)
+            shortcutErrorLabel.maximumNumberOfLines = 3
+            stack.addArrangedSubview(shortcutPendingLabel)
+            stack.addArrangedSubview(shortcutErrorLabel)
         }
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -152,4 +186,120 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     @objc private func recheck() { onCommand(.recheckReadiness) }
     @objc private func requestAccessibility() { onCommand(.requestAccessibility) }
+
+    private func shortcutRow(
+        title: String,
+        recorder: ShortcutRecorderControl,
+        defaultBinding: ShortcutBinding
+    ) -> NSView {
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        let defaultLabel = NSTextField(
+            labelWithString: "Default: \(defaultBinding.displayName)"
+        )
+        defaultLabel.textColor = .secondaryLabelColor
+        defaultLabel.font = .systemFont(ofSize: 11)
+        let labels = NSStackView(views: [titleLabel, defaultLabel])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 2
+        let row = NSStackView(views: [labels, recorder])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 20
+        labels.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
+        recorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
+        return row
+    }
+
+    private func updateShortcuts(_ state: ShortcutSettingsState) {
+        let displayed = state.pending ?? state.current
+        allWindowsRecorder.setBinding(displayed.allWindows)
+        currentAppRecorder.setBinding(displayed.currentApp)
+        shortcutPendingLabel.stringValue = state.pending == nil
+            ? ""
+            : "This change will take effect when the current switcher session ends."
+        shortcutPendingLabel.isHidden = state.pending == nil
+        shortcutErrorLabel.stringValue = state.inlineMessage ?? ""
+        shortcutErrorLabel.isHidden = state.inlineMessage == nil
+    }
+}
+
+@MainActor
+final class ShortcutRecorderControl: NSButton {
+    private let mode: SwitcherMode
+    private let onBinding: (SwitcherMode, ShortcutBinding) -> Void
+    private var binding: ShortcutBinding
+    private var isRecording = false
+
+    init(
+        mode: SwitcherMode,
+        binding: ShortcutBinding,
+        onBinding: @escaping (SwitcherMode, ShortcutBinding) -> Void
+    ) {
+        self.mode = mode
+        self.binding = binding
+        self.onBinding = onBinding
+        super.init(frame: .zero)
+        bezelStyle = .rounded
+        target = self
+        action = #selector(beginRecording)
+        setBinding(binding)
+        toolTip = "Click, then type the new \(mode.title) shortcut"
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    func setBinding(_ binding: ShortcutBinding) {
+        self.binding = binding
+        guard !isRecording else { return }
+        title = binding.displayName
+        setAccessibilityLabel("\(mode.title) shortcut, \(binding.displayName)")
+    }
+
+    @objc private func beginRecording() {
+        isRecording = true
+        title = "Type Shortcut…"
+        window?.makeFirstResponder(self)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isRecording else {
+            super.keyDown(with: event)
+            return
+        }
+        if event.keyCode == UInt16(kVK_Escape) {
+            isRecording = false
+            setBinding(binding)
+            return
+        }
+        let key = ShortcutKey(
+            keyCode: UInt32(event.keyCode),
+            displayName: Self.keyDisplayName(event)
+        )
+        let proposed = ShortcutBinding(
+            key: key,
+            modifiers: ShortcutModifiers(eventFlags: event.modifierFlags)
+        )
+        isRecording = false
+        onBinding(mode, proposed)
+    }
+
+    private static func keyDisplayName(_ event: NSEvent) -> String {
+        switch Int(event.keyCode) {
+        case kVK_Tab: "Tab"
+        case kVK_Space: "Space"
+        case kVK_Return: "Return"
+        case kVK_Delete: "Delete"
+        case kVK_ForwardDelete: "Forward Delete"
+        case kVK_LeftArrow: "←"
+        case kVK_RightArrow: "→"
+        case kVK_UpArrow: "↑"
+        case kVK_DownArrow: "↓"
+        default:
+            event.charactersIgnoringModifiers?.uppercased() ?? "Key \(event.keyCode)"
+        }
+    }
 }
