@@ -138,9 +138,10 @@ final class SystemInputAdapter: InputAdapter {
         }
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
-            guard event.keyCode == UInt16(kVK_Escape) else { return event }
-            MainActor.assumeIsolated { self?.cancel(.escape) }
-            return nil
+            let consumed = MainActor.assumeIsolated {
+                self?.consumeEscapeIfActive(keyCode: event.keyCode) ?? false
+            }
+            return consumed ? nil : event
         }
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
@@ -193,6 +194,12 @@ final class SystemInputAdapter: InputAdapter {
         guard shortcutIsActive else { return }
         shortcutIsActive = false
         onEvent?(.cancel(reason))
+    }
+
+    func consumeEscapeIfActive(keyCode: UInt16) -> Bool {
+        guard shortcutIsActive, keyCode == UInt16(kVK_Escape) else { return false }
+        cancel(.escape)
+        return true
     }
 
 }

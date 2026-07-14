@@ -58,6 +58,8 @@ final class SystemWorkspaceAdapter: WorkspaceAdapter {
         WorkspaceApplicationFacts(
             pid: application.processIdentifier,
             bundleIdentifier: application.bundleIdentifier,
+            applicationName: application.localizedName,
+            bundlePath: application.bundleURL?.path,
             isHidden: application.isHidden,
             isFrontmost: application.isActive
         )

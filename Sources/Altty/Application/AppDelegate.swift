@@ -64,13 +64,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             shortcutInvocationTask = Task { [weak self] in
                 await priorInvocation?.value
                 guard let self else { return }
-                if self.environment.engine.activeSwitchSession == nil {
-                    self.run(await self.environment.engine.beginAllWindowsSwitch(
-                        direction: direction
-                    ))
-                } else {
-                    self.run(self.environment.engine.receiveSession(.navigate(direction)))
-                }
+                self.run(await self.environment.engine.invokeAllWindowsSwitch(
+                    direction: direction
+                ))
                 self.refreshPresentation()
             }
         case .holdModifiersReleased:

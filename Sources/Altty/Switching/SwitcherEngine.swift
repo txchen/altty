@@ -152,37 +152,71 @@ enum SwitcherSessionEvent: Equatable, Sendable {
     case cancel(SwitcherCancellationReason)
 }
 
+@MainActor
+protocol SwitcherClock: Sendable {
+    var nowMilliseconds: Int64 { get }
+}
+
+struct SystemSwitcherClock: SwitcherClock {
+    var nowMilliseconds: Int64 {
+        Int64(ProcessInfo.processInfo.systemUptime * 1_000)
+    }
+}
+
 struct SwitcherPanelState: Equatable, Sendable {
     let mode: SwitcherMode
-    let candidates: [SwitchableWindow]
+    let rows: [SwitcherPanelRow]
     let selectedIdentity: WindowIdentity
 
     var title: String { mode.title }
     var shortcutDescription: String { mode.shortcutDescription }
 }
 
-enum ImmediateSwitchPhase: Equatable, Sendable {
+struct SwitcherPanelRow: Equatable, Sendable {
+    let identity: WindowIdentity
+    let title: String
+    let applicationName: String
+    let applicationBundlePath: String?
+    let isMinimized: Bool
+    let applicationIsHidden: Bool
+    let isFullscreen: Bool
+}
+
+enum SwitcherSessionPhase: Equatable, Sendable {
     case waitingForModifierRelease
     case deminimizing
     case focusing
     case verifying
 }
 
-struct ImmediateSwitchSession: Equatable, Sendable {
+struct SwitcherSession: Equatable, Sendable {
     let mode: SwitcherMode
     let invocationPID: ProcessID?
     var candidates: [SwitchableWindow]
     let origin: WindowIdentity?
     var selectedIndex: Int
-    var phase: ImmediateSwitchPhase
+    var phase: SwitcherSessionPhase
     var panelIsVisible = false
+    let panelPresentationDeadlineMilliseconds: Int64
 
     var target: SwitchableWindow { candidates[selectedIndex] }
 
     var panelState: SwitcherPanelState {
         SwitcherPanelState(
             mode: mode,
-            candidates: candidates,
+            rows: candidates.map { candidate in
+                SwitcherPanelRow(
+                    identity: candidate.identity,
+                    title: candidate.title ?? "Untitled Window",
+                    applicationName: candidate.applicationName
+                        ?? candidate.bundleIdentifier
+                        ?? "Application \(candidate.pid)",
+                    applicationBundlePath: candidate.applicationBundlePath,
+                    isMinimized: candidate.isMinimized,
+                    applicationIsHidden: candidate.applicationIsHidden,
+                    isFullscreen: candidate.isFullscreen
+                )
+            },
             selectedIdentity: target.identity
         )
     }
@@ -200,8 +234,9 @@ enum SwitchingEvent: Equatable, Sendable {
 @MainActor
 final class SwitcherEngine {
     private let inventory: any InventoryAdapter
+    private let clock: any SwitcherClock
     private var suppressedFocusPromotions: Set<WindowIdentity> = []
-    private(set) var activeSwitchSession: ImmediateSwitchSession?
+    private(set) var activeSwitchSession: SwitcherSession?
 
     private(set) var presentationState = SwitcherPresentationState(
         hasLaunched: false,
@@ -209,8 +244,12 @@ final class SwitcherEngine {
         windowServer: .unknown
     )
 
-    init(inventory: any InventoryAdapter = WindowInventory()) {
+    init(
+        inventory: any InventoryAdapter = WindowInventory(),
+        clock: any SwitcherClock = SystemSwitcherClock()
+    ) {
         self.inventory = inventory
+        self.clock = clock
     }
 
     func receiveInventory(_ event: InventoryEvent) async -> [SwitcherEffect] {
@@ -224,6 +263,14 @@ final class SwitcherEngine {
         }
         let identities = await inventory.apply(event)
         var effects: [SwitcherEffect] = identities.isEmpty ? [] : [.enrichWindows(identities)]
+        if case let .workspaceChanged(.activated(pid)) = event,
+           let session = activeSwitchSession,
+           session.phase == .waitingForModifierRelease,
+           session.invocationPID != pid {
+            activeSwitchSession = nil
+            effects.append(.endActiveSession)
+            return effects
+        }
         guard eventCanInvalidateCapturedCandidates(event),
               let session = activeSwitchSession else { return effects }
 
@@ -290,17 +337,25 @@ final class SwitcherEngine {
         } else {
             selectedIndex = direction == .forward ? 0 : candidates.count - 1
         }
-        activeSwitchSession = ImmediateSwitchSession(
+        activeSwitchSession = SwitcherSession(
             mode: .allWindows,
             invocationPID: candidates.first(where: \.applicationIsFrontmost)?.pid ?? origin?.pid,
             candidates: candidates,
             origin: origin,
             selectedIndex: selectedIndex,
-            phase: .waitingForModifierRelease
+            phase: .waitingForModifierRelease,
+            panelPresentationDeadlineMilliseconds: clock.nowMilliseconds + 125
         )
 
         if candidates.count == 1 { return confirmAllWindowsSwitch() }
         return [.scheduleSwitcherPanel(delayMilliseconds: 125)]
+    }
+
+    func invokeAllWindowsSwitch(direction: SwitchDirection) async -> [SwitcherEffect] {
+        if activeSwitchSession == nil {
+            return await beginAllWindowsSwitch(direction: direction)
+        }
+        return receiveSession(.navigate(direction))
     }
 
     func receiveSession(_ event: SwitcherSessionEvent) -> [SwitcherEffect] {
@@ -308,7 +363,10 @@ final class SwitcherEngine {
               session.phase == .waitingForModifierRelease else { return [] }
         switch event {
         case .panelDelayElapsed:
-            guard !session.panelIsVisible else { return [] }
+            guard !session.panelIsVisible,
+                  clock.nowMilliseconds >= session.panelPresentationDeadlineMilliseconds else {
+                return []
+            }
             session.panelIsVisible = true
             activeSwitchSession = session
             return [.showSwitcherPanel(session.panelState)]
@@ -327,8 +385,10 @@ final class SwitcherEngine {
             activeSwitchSession = session
             return session.panelIsVisible ? [.updateSwitcherPanel(session.panelState)] : []
         case let .confirm(identity):
-            if let identity,
-               let index = session.candidates.firstIndex(where: { $0.identity == identity }) {
+            if let identity {
+                guard let index = session.candidates.firstIndex(where: {
+                    $0.identity == identity
+                }) else { return [] }
                 session.selectedIndex = index
                 activeSwitchSession = session
             }
@@ -384,7 +444,7 @@ final class SwitcherEngine {
         }
     }
 
-    private func failActiveSwitch(_ session: ImmediateSwitchSession) -> [SwitcherEffect] {
+    private func failActiveSwitch(_ session: SwitcherSession) -> [SwitcherEffect] {
         activeSwitchSession = nil
         suppressedFocusPromotions.insert(session.target.identity)
         let origin = session.origin == session.target.identity ? nil : session.origin

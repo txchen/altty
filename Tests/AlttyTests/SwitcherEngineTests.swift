@@ -356,6 +356,15 @@ struct WindowServerSmokeTests {
 
 @MainActor
 struct InputSmokeTests {
+    @Test func escapeIsNotConsumedOutsideAnActiveSwitcherSession() {
+        let input = SystemInputAdapter()
+        var events: [ShortcutEvent] = []
+        input.install { events.append($0) }
+
+        #expect(!input.consumeEscapeIfActive(keyCode: UInt16(kVK_Escape)))
+        #expect(events.isEmpty)
+    }
+
     @Test func realDefaultOptionTabRegistrationDoesNotChangeSystemSettings() {
         guard getenv("ALTTY_RUN_SHORTCUT_SMOKE").map({ String(cString: $0) }) == "1" else { return }
         let input = SystemInputAdapter()
@@ -624,7 +633,16 @@ struct WindowInventoryEngineTests {
 }
 
 @MainActor
-struct ImmediateAllWindowsSwitchTests {
+private final class ManualSwitcherClock: SwitcherClock, @unchecked Sendable {
+    var nowMilliseconds: Int64
+
+    init(nowMilliseconds: Int64 = 1_000) {
+        self.nowMilliseconds = nowMilliseconds
+    }
+}
+
+@MainActor
+struct AllWindowsSwitcherSessionTests {
     private func semantics(
         title: String,
         minimized: Bool = false,
@@ -640,9 +658,11 @@ struct ImmediateAllWindowsSwitchTests {
         )
     }
 
-    private func makeInteractiveEngine() async -> (SwitcherEngine, [WindowIdentity]) {
+    private func makeInteractiveEngine(
+        clock: any SwitcherClock = SystemSwitcherClock()
+    ) async -> (SwitcherEngine, [WindowIdentity]) {
         let inventory = WindowInventory()
-        let engine = SwitcherEngine(inventory: inventory)
+        let engine = SwitcherEngine(inventory: inventory, clock: clock)
         _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
             activeSpaceIDs: [1],
             windows: [
@@ -666,6 +686,8 @@ struct ImmediateAllWindowsSwitchTests {
             WorkspaceApplicationFacts(
                 pid: 100,
                 bundleIdentifier: "example.first",
+                applicationName: "First App",
+                bundlePath: "/Applications/First.app",
                 isHidden: false,
                 isFrontmost: true
             ),
@@ -687,7 +709,8 @@ struct ImmediateAllWindowsSwitchTests {
     }
 
     @Test func heldSessionSchedulesA125MillisecondPanelWithoutFlashingForQuickTaps() async {
-        let (heldEngine, identities) = await makeInteractiveEngine()
+        let clock = ManualSwitcherClock()
+        let (heldEngine, identities) = await makeInteractiveEngine(clock: clock)
 
         #expect(await heldEngine.beginAllWindowsSwitch() == [
             .scheduleSwitcherPanel(delayMilliseconds: 125),
@@ -695,6 +718,11 @@ struct ImmediateAllWindowsSwitchTests {
         #expect(heldEngine.activeSwitchSession?.mode == .allWindows)
         #expect(heldEngine.activeSwitchSession?.invocationPID == 100)
         #expect(heldEngine.activeSwitchSession?.candidates.map(\.identity) == identities)
+        #expect(heldEngine.activeSwitchSession?.panelState.rows[0].applicationName == "First App")
+        #expect(heldEngine.activeSwitchSession?.panelState.rows[0].applicationBundlePath == "/Applications/First.app")
+        clock.nowMilliseconds += 124
+        #expect(heldEngine.receiveSession(.panelDelayElapsed) == [])
+        clock.nowMilliseconds += 1
         #expect(heldEngine.receiveSession(.panelDelayElapsed) == [
             .showSwitcherPanel(heldEngine.activeSwitchSession!.panelState),
         ])
@@ -708,6 +736,17 @@ struct ImmediateAllWindowsSwitchTests {
         #expect(quickEngine.receiveSession(.panelDelayElapsed) == [])
     }
 
+    @Test func engineOwnsBeginVersusRepeatedNavigationPolicy() async {
+        let (engine, identities) = await makeInteractiveEngine()
+
+        #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        #expect(engine.activeSwitchSession?.target.identity == identities[1])
+        #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [])
+        #expect(engine.activeSwitchSession?.target.identity == identities[2])
+    }
+
     @Test func reverseInvocationSelectsThePreviousWindowAndWraps() async {
         let (engine, identities) = await makeInteractiveEngine()
 
@@ -719,8 +758,10 @@ struct ImmediateAllWindowsSwitchTests {
     }
 
     @Test func keyboardAndWheelNavigationWrapWithoutPreviewingFocus() async {
-        let (engine, identities) = await makeInteractiveEngine()
+        let clock = ManualSwitcherClock()
+        let (engine, identities) = await makeInteractiveEngine(clock: clock)
         _ = await engine.beginAllWindowsSwitch()
+        clock.nowMilliseconds += 125
         _ = engine.receiveSession(.panelDelayElapsed)
 
         #expect(engine.activeSwitchSession?.target.identity == identities[1])
@@ -736,8 +777,10 @@ struct ImmediateAllWindowsSwitchTests {
     }
 
     @Test func hoverSharesSelectionClickConfirmsAndCancellationPreservesMRU() async {
-        let (clickEngine, identities) = await makeInteractiveEngine()
+        let clickClock = ManualSwitcherClock()
+        let (clickEngine, identities) = await makeInteractiveEngine(clock: clickClock)
         _ = await clickEngine.beginAllWindowsSwitch()
+        clickClock.nowMilliseconds += 125
         _ = clickEngine.receiveSession(.panelDelayElapsed)
 
         #expect(clickEngine.receiveSession(.select(identities[2])) == [
@@ -758,8 +801,10 @@ struct ImmediateAllWindowsSwitchTests {
     }
 
     @Test func frozenRowsIgnoreInsertionsAndMutationsWhileDestroyedSelectionAdvances() async {
-        let (engine, identities) = await makeInteractiveEngine()
+        let clock = ManualSwitcherClock()
+        let (engine, identities) = await makeInteractiveEngine(clock: clock)
         _ = await engine.beginAllWindowsSwitch()
+        clock.nowMilliseconds += 125
         _ = engine.receiveSession(.panelDelayElapsed)
         let capturedRows = engine.activeSwitchSession?.candidates
 
@@ -779,6 +824,20 @@ struct ImmediateAllWindowsSwitchTests {
         ])
         #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [identities[0], identities[2]])
         #expect(engine.activeSwitchSession?.target.identity == identities[2])
+        #expect(engine.receiveSession(.confirm(identities[1])) == [])
+        #expect(engine.activeSwitchSession?.phase == .waitingForModifierRelease)
+    }
+
+
+    @Test func unexpectedFrontmostApplicationChangeCancelsLostInteractionContext() async {
+        let (engine, _) = await makeInteractiveEngine()
+        _ = await engine.beginAllWindowsSwitch()
+
+        #expect(await engine.receiveInventory(.workspaceChanged(.activated(pid: 999))) == [
+            .endActiveSession,
+        ])
+        #expect(engine.activeSwitchSession == nil)
+        #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10, 20, 30])
     }
 
     @Test func modifierReleaseFocusesTheWindowAfterTheCurrentMRUItemWithWraparound() async {
@@ -948,7 +1007,7 @@ struct ImmediateAllWindowsSwitchTests {
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10, 20])
     }
 
-    @Test func emptySoleCurrentAndCurrentAbsentCasesFollowTheImmediateSelectionContract() async {
+    @Test func emptySoleCurrentAndCurrentAbsentCasesFollowTheQuickSelectionContract() async {
         let emptyEngine = SwitcherEngine(inventory: WindowInventory())
         #expect(await emptyEngine.beginAllWindowsSwitch() == [])
         #expect(emptyEngine.activeSwitchSession == nil)
@@ -992,7 +1051,7 @@ struct ImmediateAllWindowsSwitchTests {
         #expect(absentEngine.activeSwitchSession?.target.identity == onlyCandidate)
     }
 
-    @Test func readinessLossCancelsAnUnconfirmedImmediateSwitch() async {
+    @Test func readinessLossCancelsAnUnconfirmedSwitcherSession() async {
         let inventory = WindowInventory()
         let engine = SwitcherEngine(inventory: inventory)
         _ = engine.send(.launch)
@@ -1118,18 +1177,19 @@ struct SwitcherPanelTests {
         minimized: Bool = false,
         hidden: Bool = false,
         fullscreen: Bool = false
-    ) -> SwitchableWindow {
-        SwitchableWindow(
-            wid: wid,
-            pid: ProcessID(120_000 + Int32(wid)),
-            generation: 1,
+    ) -> SwitcherPanelRow {
+        SwitcherPanelRow(
+            identity: WindowIdentity(
+                wid: wid,
+                pid: ProcessID(120_000 + Int32(wid)),
+                generation: 1
+            ),
             title: title,
-            titleIsStale: false,
+            applicationName: "example.app.\(wid)",
+            applicationBundlePath: nil,
             isMinimized: minimized,
-            isFullscreen: fullscreen,
             applicationIsHidden: hidden,
-            applicationIsFrontmost: false,
-            bundleIdentifier: "example.app.\(wid)"
+            isFullscreen: fullscreen
         )
     }
 
@@ -1139,7 +1199,7 @@ struct SwitcherPanelTests {
         let second = window(wid: 20, title: "Second", hidden: true, fullscreen: true)
         let state = SwitcherPanelState(
             mode: .allWindows,
-            candidates: [first, second],
+            rows: [first, second],
             selectedIdentity: second.identity
         )
         let panel = SwitcherPanelController()
@@ -1171,9 +1231,54 @@ struct SwitcherPanelTests {
             ]
         ))
 
-        panel.hover(row: 0)
-        panel.click(row: 1)
-        panel.scroll(direction: .backward)
+        let firstRowLocation = panel.tableView.convert(
+            NSPoint(
+                x: panel.tableView.rect(ofRow: 0).midX,
+                y: panel.tableView.rect(ofRow: 0).midY
+            ),
+            to: nil
+        )
+        let secondRowLocation = panel.tableView.convert(
+            NSPoint(
+                x: panel.tableView.rect(ofRow: 1).midX,
+                y: panel.tableView.rect(ofRow: 1).midY
+            ),
+            to: nil
+        )
+        let windowNumber = panel.tableView.window?.windowNumber ?? 0
+        let hoverEvent = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: firstRowLocation,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 0,
+            pressure: 0
+        )!
+        let clickEvent = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: secondRowLocation,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: windowNumber,
+            context: nil,
+            eventNumber: 2,
+            clickCount: 1,
+            pressure: 1
+        )!
+        panel.tableView.mouseMoved(with: hoverEvent)
+        panel.tableView.mouseDown(with: clickEvent)
+        let scrollEvent = NSEvent(cgEvent: CGEvent(
+            scrollWheelEvent2Source: nil,
+            units: .pixel,
+            wheelCount: 1,
+            wheel1: 10,
+            wheel2: 0,
+            wheel3: 0
+        )!)!
+        panel.tableView.scrollWheel(with: scrollEvent)
         #expect(interactions == [
             .select(first.identity),
             .confirm(second.identity),

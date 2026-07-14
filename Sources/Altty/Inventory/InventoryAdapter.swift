@@ -56,6 +56,8 @@ struct WindowSemanticPatch: Equatable, Sendable {
 struct WorkspaceApplicationFacts: Equatable, Sendable {
     let pid: ProcessID
     let bundleIdentifier: String?
+    var applicationName: String? = nil
+    var bundlePath: String? = nil
     let isHidden: Bool
     let isFrontmost: Bool
 }
@@ -91,6 +93,8 @@ struct SwitchableWindow: Equatable, Sendable {
     let applicationIsHidden: Bool
     let applicationIsFrontmost: Bool
     let bundleIdentifier: String?
+    var applicationName: String? = nil
+    var applicationBundlePath: String? = nil
 
     var identity: WindowIdentity {
         WindowIdentity(wid: wid, pid: pid, generation: generation)
@@ -138,6 +142,8 @@ private struct SemanticField<Value: Equatable & Sendable>: Equatable, Sendable {
 
 private struct ApplicationState: Equatable, Sendable {
     var bundleIdentifier: String?
+    var applicationName: String?
+    var bundlePath: String?
     var isHidden = false
     var isFrontmost = false
 }
@@ -256,7 +262,9 @@ actor WindowInventory: InventoryAdapter {
                 isFullscreen: record.isFullscreen.value ?? false,
                 applicationIsHidden: application.isHidden,
                 applicationIsFrontmost: application.isFrontmost,
-                bundleIdentifier: application.bundleIdentifier
+                bundleIdentifier: application.bundleIdentifier,
+                applicationName: application.applicationName,
+                applicationBundlePath: application.bundlePath
             )
         }
         return WindowInventorySnapshot(
@@ -399,6 +407,8 @@ actor WindowInventory: InventoryAdapter {
             applications = Dictionary(uniqueKeysWithValues: facts.map { fact in
                 (fact.pid, ApplicationState(
                     bundleIdentifier: fact.bundleIdentifier,
+                    applicationName: fact.applicationName,
+                    bundlePath: fact.bundlePath,
                     isHidden: fact.isHidden,
                     isFrontmost: fact.isFrontmost
                 ))
@@ -406,6 +416,8 @@ actor WindowInventory: InventoryAdapter {
         case let .launched(fact):
             applications[fact.pid] = ApplicationState(
                 bundleIdentifier: fact.bundleIdentifier,
+                applicationName: fact.applicationName,
+                bundlePath: fact.bundlePath,
                 isHidden: fact.isHidden,
                 isFrontmost: fact.isFrontmost
             )

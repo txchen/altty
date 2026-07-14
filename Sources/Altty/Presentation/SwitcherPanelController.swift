@@ -25,7 +25,7 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
     private let panel: NSPanel
     private let titleLabel = NSTextField(labelWithString: "")
     private let shortcutLabel = NSTextField(labelWithString: "")
-    private let tableView = SwitcherTableView()
+    let tableView = SwitcherTableView()
     private let scrollView = NSScrollView()
 
     var observedState: SwitcherPanelObservedState {
@@ -33,9 +33,12 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
             isVisible: panel.isVisible,
             title: state?.title,
             shortcut: state?.shortcutDescription,
-            rowCount: state?.candidates.count ?? 0,
-            selectedIdentity: state?.selectedIdentity,
-            rows: state?.candidates.map(observedRow) ?? []
+            rowCount: tableView.numberOfRows,
+            selectedIdentity: state?.rows[safe: tableView.selectedRow]?.identity,
+            rows: (0..<tableView.numberOfRows).compactMap { row in
+                (tableView.view(atColumn: 0, row: row, makeIfNecessary: true)
+                    as? SwitcherRowView)?.observedRow
+            }
         )
     }
 
@@ -61,13 +64,13 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         titleLabel.stringValue = state.title
         shortcutLabel.stringValue = state.shortcutDescription
         tableView.reloadData()
-        if let selectedRow = state.candidates.firstIndex(where: {
+        if let selectedRow = state.rows.firstIndex(where: {
             $0.identity == state.selectedIdentity
         }) {
             tableView.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
             tableView.scrollRowToVisible(selectedRow)
         }
-        resizeForRows(state.candidates.count)
+        resizeForRows(state.rows.count)
     }
 
     func dismiss() {
@@ -76,15 +79,15 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         tableView.reloadData()
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { state?.candidates.count ?? 0 }
+    func numberOfRows(in tableView: NSTableView) -> Int { state?.rows.count ?? 0 }
 
     func tableView(
         _ tableView: NSTableView,
         viewFor tableColumn: NSTableColumn?,
         row: Int
     ) -> NSView? {
-        guard let candidate = state?.candidates[row] else { return nil }
-        return makeRow(for: candidate)
+        guard let row = state?.rows[row] else { return nil }
+        return makeRow(for: row)
     }
 
     private func configurePanel() {
@@ -94,6 +97,7 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .transient, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
+        panel.acceptsMouseMovedEvents = true
 
         let background = NSVisualEffectView()
         background.material = .hudWindow
@@ -146,9 +150,11 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         panel.contentView = background
     }
 
-    private func makeRow(for candidate: SwitchableWindow) -> NSView {
-        let application = NSRunningApplication(processIdentifier: candidate.pid)
-        let icon = NSImageView(image: application?.icon ?? NSImage(
+    private func makeRow(for rowState: SwitcherPanelRow) -> NSView {
+        let applicationIcon = rowState.applicationBundlePath.map {
+            NSWorkspace.shared.icon(forFile: $0)
+        }
+        let icon = NSImageView(image: applicationIcon ?? NSImage(
             systemSymbolName: "app.fill",
             accessibilityDescription: "Application"
         ) ?? NSImage())
@@ -159,13 +165,12 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
             icon.heightAnchor.constraint(equalToConstant: 32),
         ])
 
-        let title = NSTextField(labelWithString: candidate.title ?? "Untitled Window")
+        let title = NSTextField(labelWithString: rowState.title)
         title.font = .systemFont(ofSize: 13, weight: .medium)
         title.lineBreakMode = .byTruncatingTail
         title.maximumNumberOfLines = 1
 
-        let applicationName = applicationName(for: candidate)
-        let subtitle = NSTextField(labelWithString: applicationName)
+        let subtitle = NSTextField(labelWithString: rowState.applicationName)
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
@@ -175,59 +180,52 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         labels.alignment = .leading
         labels.spacing = 2
 
-        let badges = stateBadges(for: candidate)
+        let badges = stateBadges(for: rowState)
         let badgeLabel = NSTextField(labelWithString: badges.joined(separator: "  "))
         badgeLabel.font = .systemFont(ofSize: 10, weight: .medium)
         badgeLabel.textColor = .secondaryLabelColor
         badgeLabel.setAccessibilityLabel(badges.joined(separator: ", "))
 
-        let row = NSStackView(views: [icon, labels, NSView(), badgeLabel])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        row.edgeInsets = NSEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+        let row = SwitcherRowView(
+            views: [icon, labels, NSView(), badgeLabel],
+            observedRow: observedRow(for: rowState)
+        )
         row.setAccessibilityElement(true)
         row.setAccessibilityRole(.row)
-        row.setAccessibilityLabel("\(candidate.title ?? "Untitled Window"), \(applicationName)")
+        row.setAccessibilityLabel("\(rowState.title), \(rowState.applicationName)")
         return row
     }
 
-    private func stateBadges(for candidate: SwitchableWindow) -> [String] {
+    private func stateBadges(for row: SwitcherPanelRow) -> [String] {
         var badges: [String] = []
-        if candidate.isMinimized { badges.append("Minimized") }
-        if candidate.applicationIsHidden { badges.append("Hidden") }
-        if candidate.isFullscreen { badges.append("Full Screen") }
+        if row.isMinimized { badges.append("Minimized") }
+        if row.applicationIsHidden { badges.append("Hidden") }
+        if row.isFullscreen { badges.append("Full Screen") }
         return badges
     }
 
     func hover(row: Int) {
-        guard let candidate = state?.candidates[safe: row] else { return }
-        onInteraction?(.select(candidate.identity))
+        guard let row = state?.rows[safe: row] else { return }
+        onInteraction?(.select(row.identity))
     }
 
     func click(row: Int) {
-        guard let candidate = state?.candidates[safe: row] else { return }
-        onInteraction?(.confirm(candidate.identity))
+        guard let row = state?.rows[safe: row] else { return }
+        onInteraction?(.confirm(row.identity))
     }
 
     func scroll(direction: SwitchDirection) {
         onInteraction?(.navigate(direction))
     }
 
-    private func observedRow(for candidate: SwitchableWindow) -> SwitcherPanelObservedRow {
+    private func observedRow(for row: SwitcherPanelRow) -> SwitcherPanelObservedRow {
         SwitcherPanelObservedRow(
-            identity: candidate.identity,
-            title: candidate.title ?? "Untitled Window",
-            applicationName: applicationName(for: candidate),
-            badges: stateBadges(for: candidate),
+            identity: row.identity,
+            title: row.title,
+            applicationName: row.applicationName,
+            badges: stateBadges(for: row),
             showsApplicationIcon: true
         )
-    }
-
-    private func applicationName(for candidate: SwitchableWindow) -> String {
-        NSRunningApplication(processIdentifier: candidate.pid)?.localizedName
-            ?? candidate.bundleIdentifier
-            ?? "Application \(candidate.pid)"
     }
 
     private func resizeForRows(_ rowCount: Int) {
@@ -246,7 +244,31 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
     }
 }
 
-private final class SwitcherTableView: NSTableView {
+final class SwitcherRowView: NSView {
+    let observedRow: SwitcherPanelObservedRow
+
+    init(views: [NSView], observedRow: SwitcherPanelObservedRow) {
+        self.observedRow = observedRow
+        super.init(frame: .zero)
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 5, left: 10, bottom: 5, right: 10)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+}
+
+final class SwitcherTableView: NSTableView {
     var onHover: ((Int) -> Void)?
     var onClick: ((Int) -> Void)?
     var onScroll: ((SwitchDirection) -> Void)?
