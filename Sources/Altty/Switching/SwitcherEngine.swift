@@ -90,6 +90,11 @@ enum SwitcherEvent: Equatable, Sendable {
     case windowServerChanged(Availability)
 }
 
+enum InventoryRefreshMode: Equatable, Sendable {
+    case replace
+    case reconcile
+}
+
 enum SwitcherEffect: Equatable, Sendable {
     case checkAccessibility
     case checkWindowServer
@@ -101,17 +106,41 @@ enum SwitcherEffect: Equatable, Sendable {
     case requestAccessibility
     case openReleasesPage
     case terminate
+    case enrichWindows([WindowIdentity])
+    case startInventoryObservation
+    case stopInventoryObservation
+    case refreshInventory(InventoryRefreshMode)
+    case clearInventory
 }
 
 /// The application-service seam. It owns only value state and requested effects;
 /// concrete AppKit and system adapter types remain outside it.
 @MainActor
 final class SwitcherEngine {
+    private let inventory: any InventoryAdapter
+
     private(set) var presentationState = SwitcherPresentationState(
         hasLaunched: false,
         accessibility: .unknown,
         windowServer: .unknown
     )
+
+    init(inventory: any InventoryAdapter = WindowInventory()) {
+        self.inventory = inventory
+    }
+
+    func receiveInventory(_ event: InventoryEvent) async -> [SwitcherEffect] {
+        let identities = await inventory.apply(event)
+        return identities.isEmpty ? [] : [.enrichWindows(identities)]
+    }
+
+    func inventorySnapshot() async -> WindowInventorySnapshot {
+        await inventory.snapshot()
+    }
+
+    func inventoryIdentity(for wid: WindowID, pid: ProcessID? = nil) async -> WindowIdentity? {
+        await inventory.identity(for: wid, pid: pid)
+    }
 
     func send(_ command: SwitcherCommand) -> [SwitcherEffect] {
         switch command {
@@ -145,7 +174,14 @@ final class SwitcherEngine {
             accessibility: .unknown,
             windowServer: .unknown
         )
-        return [.setShortcutsEnabled(false), .endActiveSession, .checkAccessibility, .checkWindowServer]
+        return [
+            .setShortcutsEnabled(false),
+            .endActiveSession,
+            .stopInventoryObservation,
+            .clearInventory,
+            .checkAccessibility,
+            .checkWindowServer,
+        ]
     }
 
     func receive(_ event: SwitcherEvent) -> [SwitcherEffect] {
@@ -173,11 +209,15 @@ final class SwitcherEngine {
         if previousState.isReady && !presentationState.isReady || accessibilityWasRevoked {
             effects.append(.setShortcutsEnabled(false))
             effects.append(.endActiveSession)
+            effects.append(.stopInventoryObservation)
+            effects.append(.clearInventory)
             if accessibilityWasRevoked {
                 effects.append(.releaseAccessibilityObservers)
             }
         } else if !previousState.isReady && presentationState.isReady {
             effects.append(.setShortcutsEnabled(true))
+            effects.append(.startInventoryObservation)
+            effects.append(.refreshInventory(.replace))
         }
 
         switch event {

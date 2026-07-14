@@ -1,6 +1,14 @@
 import AppKit
 import ApplicationServices
+import Darwin
 import Foundation
+
+enum AccessibilityInventoryEvent: Equatable, Sendable {
+    case created(pid: ProcessID, wid: WindowID?)
+    case destroyed(pid: ProcessID, wid: WindowID?)
+    case focused(pid: ProcessID, wid: WindowID?)
+    case semanticsChanged(pid: ProcessID, wid: WindowID?)
+}
 
 @MainActor
 protocol AccessibilityAdapter: AnyObject {
@@ -9,6 +17,10 @@ protocol AccessibilityAdapter: AnyObject {
     func startMonitoringAvailability(_ onChange: @escaping (Availability) -> Void)
     func stopMonitoringAvailability()
     func releaseObservers()
+    func enrichment(for identity: WindowIdentity) async -> WindowSemanticPatch
+    func startMonitoringInventory(_ onEvent: @escaping @MainActor (AccessibilityInventoryEvent) -> Void)
+    func observeApplication(pid: ProcessID)
+    func stopMonitoringInventory()
 }
 
 @MainActor
@@ -21,7 +33,13 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var permissionChangeTimer: DispatchSourceTimer?
     private var permissionObservationDeadline: DispatchTime?
-    private var elementObservers: [AXObserver] = []
+    private struct ObserverRegistration {
+        let observer: AXObserver
+        let context: Unmanaged<AXObserverContext>
+    }
+
+    private var inventoryEventHandler: (@MainActor (AccessibilityInventoryEvent) -> Void)?
+    private var elementObservers: [ProcessID: ObserverRegistration] = [:]
 
     func availability() -> Availability {
         AXIsProcessTrusted() ? .available : .unavailable
@@ -73,14 +91,111 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
     }
 
     func releaseObservers() {
-        for observer in elementObservers {
+        for registration in elementObservers.values {
             CFRunLoopRemoveSource(
                 CFRunLoopGetMain(),
-                AXObserverGetRunLoopSource(observer),
+                AXObserverGetRunLoopSource(registration.observer),
                 .commonModes
             )
+            registration.context.release()
         }
         elementObservers.removeAll()
+    }
+
+    func enrichment(for identity: WindowIdentity) async -> WindowSemanticPatch {
+        await Task.detached(priority: .userInitiated) {
+            AXWindowReader.semanticPatch(for: identity)
+        }.value
+    }
+
+    func startMonitoringInventory(
+        _ onEvent: @escaping @MainActor (AccessibilityInventoryEvent) -> Void
+    ) {
+        stopMonitoringInventory()
+        inventoryEventHandler = onEvent
+        for application in NSWorkspace.shared.runningApplications {
+            observeApplication(pid: application.processIdentifier)
+        }
+    }
+
+    func observeApplication(pid: ProcessID) {
+        guard pid > 0, elementObservers[pid] == nil, let inventoryEventHandler else { return }
+        let context = Unmanaged.passRetained(AXObserverContext(pid: pid) { event in
+            Task { @MainActor in inventoryEventHandler(event) }
+        })
+        var observer: AXObserver?
+        let error = AXObserverCreate(pid, Self.inventoryObserverCallback, &observer)
+        guard error == .success, let observer else {
+            context.release()
+            return
+        }
+
+        let application = AXUIElementCreateApplication(pid)
+        let pointer = context.toOpaque()
+        let appNotifications: [CFString] = [
+            kAXWindowCreatedNotification as CFString,
+            kAXFocusedWindowChangedNotification as CFString,
+        ]
+        for notification in appNotifications {
+            AXObserverAddNotification(observer, application, notification, pointer)
+        }
+        CFRunLoopAddSource(
+            CFRunLoopGetMain(),
+            AXObserverGetRunLoopSource(observer),
+            .commonModes
+        )
+        elementObservers[pid] = ObserverRegistration(observer: observer, context: context)
+
+        Task {
+            let windows = await Task.detached(priority: .utility) {
+                AXWindowReader.windowElements(pid: pid)
+            }.value
+            guard self.elementObservers[pid]?.observer === observer else { return }
+            for box in windows {
+                Self.addWindowNotifications(observer: observer, window: box.element, context: pointer)
+            }
+        }
+    }
+
+    func stopMonitoringInventory() {
+        releaseObservers()
+        inventoryEventHandler = nil
+    }
+
+    private nonisolated static let inventoryObserverCallback: AXObserverCallback = {
+        observer, element, notification, contextPointer in
+        guard let contextPointer else { return }
+        let context = Unmanaged<AXObserverContext>.fromOpaque(contextPointer).takeUnretainedValue()
+        let notificationName = notification as String
+        let wid = AXWindowReader.windowID(element)
+
+        if notificationName == kAXWindowCreatedNotification {
+            addWindowNotifications(observer: observer, window: element, context: contextPointer)
+            context.publish(.created(pid: context.pid, wid: wid))
+        } else if notificationName == kAXFocusedWindowChangedNotification {
+            context.publish(.focused(pid: context.pid, wid: wid))
+        } else if notificationName == kAXUIElementDestroyedNotification {
+            context.publish(.destroyed(pid: context.pid, wid: wid))
+        } else {
+            context.publish(.semanticsChanged(pid: context.pid, wid: wid))
+        }
+    }
+
+    private nonisolated static func addWindowNotifications(
+        observer: AXObserver,
+        window: AXUIElement,
+        context: UnsafeMutableRawPointer
+    ) {
+        let notifications: [CFString] = [
+            kAXUIElementDestroyedNotification as CFString,
+            kAXTitleChangedNotification as CFString,
+            kAXWindowMiniaturizedNotification as CFString,
+            kAXWindowDeminiaturizedNotification as CFString,
+        ]
+        for notification in notifications {
+            let error = AXObserverAddNotification(observer, window, notification, context)
+            if error == .notificationAlreadyRegistered { continue }
+        }
     }
 
     private func publishAvailabilityIfChanged() {
@@ -129,5 +244,104 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
         permissionChangeTimer?.cancel()
         permissionChangeTimer = nil
         permissionObservationDeadline = nil
+    }
+}
+
+private final class AXObserverContext: @unchecked Sendable {
+    let pid: ProcessID
+    private let onEvent: @Sendable (AccessibilityInventoryEvent) -> Void
+
+    init(pid: ProcessID, onEvent: @escaping @Sendable (AccessibilityInventoryEvent) -> Void) {
+        self.pid = pid
+        self.onEvent = onEvent
+    }
+
+    func publish(_ event: AccessibilityInventoryEvent) { onEvent(event) }
+}
+
+private struct AXElementBox: @unchecked Sendable {
+    let element: AXUIElement
+}
+
+private enum AXWindowReader {
+    private typealias CopyWindowID = @convention(c) (
+        AXUIElement,
+        UnsafeMutablePointer<WindowID>
+    ) -> AXError
+    private static let copyWindowID: CopyWindowID? = {
+        guard let handle = dlopen(nil, RTLD_LAZY),
+              let symbol = dlsym(handle, "_AXUIElementGetWindow") else { return nil }
+        return unsafeBitCast(symbol, to: CopyWindowID.self)
+    }()
+
+    static func semanticPatch(for identity: WindowIdentity) -> WindowSemanticPatch {
+        let application = AXUIElementCreateApplication(identity.pid)
+        AXUIElementSetMessagingTimeout(application, 0.25)
+        guard let window = windowElements(application: application).first(where: {
+            windowID($0.element) == identity.wid
+        })?.element else {
+            return WindowSemanticPatch(
+                title: .unavailable,
+                role: .unavailable,
+                subrole: .unavailable,
+                isMinimized: .unavailable,
+                isFullscreen: .unavailable,
+                isTransient: .unavailable
+            )
+        }
+
+        let title: String? = attribute(window, kAXTitleAttribute as CFString)
+        let role: String? = attribute(window, kAXRoleAttribute as CFString)
+        let subrole: String? = attribute(window, kAXSubroleAttribute as CFString)
+        let minimized: Bool? = attribute(window, kAXMinimizedAttribute as CFString)
+        let fullscreen: Bool? = attribute(window, "AXFullScreen" as CFString)
+        let transientSubroles: Set<String> = [
+            "AXMenu", "AXPopover", "AXSheet", "AXSystemFloatingWindow",
+        ]
+        let transient = (role.map { $0 != "AXWindow" } ?? true)
+            || subrole.map(transientSubroles.contains) == true
+
+        return WindowSemanticPatch(
+            title: update(title),
+            role: update(role),
+            subrole: update(subrole),
+            isMinimized: update(minimized),
+            isFullscreen: update(fullscreen),
+            isTransient: .value(transient)
+        )
+    }
+
+    static func windowElements(pid: ProcessID) -> [AXElementBox] {
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.25)
+        return windowElements(application: application)
+    }
+
+    static func windowID(_ element: AXUIElement) -> WindowID? {
+        guard let copyWindowID else { return nil }
+        var wid: WindowID = 0
+        return copyWindowID(element, &wid) == .success && wid != 0 ? wid : nil
+    }
+
+    private static func windowElements(application: AXUIElement) -> [AXElementBox] {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            application,
+            kAXWindowsAttribute as CFString,
+            &value
+        ) == .success,
+              let windows = value as? [AXUIElement] else { return [] }
+        return windows.map(AXElementBox.init)
+    }
+
+    private static func attribute<Value>(_ element: AXUIElement, _ name: CFString) -> Value? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name, &value) == .success else { return nil }
+        return value as? Value
+    }
+
+    private static func update<Value>(_ value: Value?) -> FieldUpdate<Value>
+    where Value: Equatable & Sendable {
+        value.map(FieldUpdate.value) ?? .unavailable
     }
 }

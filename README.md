@@ -26,11 +26,22 @@ read-only SkyLight capability check after a macOS update with:
 ALTTY_RUN_SKYLIGHT_SMOKE=1 scripts/test.sh --filter realReadOnlySkyLightCapabilityCheck
 ```
 
+The inventory smoke test is also read-only. Launch a controlled fixture app,
+record the WIDs it expects on the currently presented Space, then run:
+
+```sh
+ALTTY_RUN_INVENTORY_SMOKE=1 \
+ALTTY_INVENTORY_FIXTURE_PID=<pid> \
+ALTTY_INVENTORY_FIXTURE_WIDS=<wid,wid> \
+scripts/test.sh --filter realReadOnlyActiveSpaceInventoryMatchesControlledFixture
+```
+
 ## Current foundation
 
 - Menu bar app
 - Settings window
 - Fail-closed readiness and recovery for Accessibility and SkyLight capability
+- Event-driven, generation-safe Active Space window inventory with lazy AX enrichment
 - General, Shortcuts, Exceptions and About settings destinations
 - Replaceable system-adapter boundaries assembled around `SwitcherEngine`
 - No thumbnails and no Screen Recording permission

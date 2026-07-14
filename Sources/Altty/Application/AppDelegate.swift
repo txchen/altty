@@ -3,6 +3,9 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let environment: AppEnvironment
+    private var isMonitoringInventory = false
+    private var pendingInventoryRefresh: InventoryRefreshMode?
+    private var inventoryRefreshTask: Task<Void, Never>?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -25,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        stopInventoryObservation()
         environment.accessibility.stopMonitoringAvailability()
         environment.accessibility.releaseObservers()
     }
@@ -62,7 +66,142 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 environment.presentation.openReleasesPage()
             case .terminate:
                 NSApp.terminate(nil)
+            case let .enrichWindows(identities):
+                enrich(identities)
+            case .startInventoryObservation:
+                startInventoryObservation()
+            case .stopInventoryObservation:
+                stopInventoryObservation()
+            case let .refreshInventory(mode):
+                scheduleInventoryRefresh(mode)
+            case .clearInventory:
+                Task { [weak self] in
+                    guard let self else { return }
+                    self.run(await self.environment.engine.receiveInventory(.clear))
+                }
             }
+        }
+    }
+
+    private func startInventoryObservation() {
+        guard !isMonitoringInventory else { return }
+        isMonitoringInventory = true
+        environment.windowServer.startMonitoringInventory { [weak self] event in
+            self?.receive(event)
+        }
+        environment.accessibility.startMonitoringInventory { [weak self] event in
+            self?.receive(event)
+        }
+        environment.workspace.startMonitoring { [weak self] event in
+            self?.receive(event)
+        }
+
+        let facts = environment.workspace.runningApplications()
+        Task { [weak self] in
+            guard let self else { return }
+            self.run(await self.environment.engine.receiveInventory(
+                .workspaceChanged(.snapshot(facts))
+            ))
+        }
+    }
+
+    private func stopInventoryObservation() {
+        guard isMonitoringInventory else { return }
+        isMonitoringInventory = false
+        inventoryRefreshTask?.cancel()
+        inventoryRefreshTask = nil
+        pendingInventoryRefresh = nil
+        environment.windowServer.stopMonitoringInventory()
+        environment.accessibility.stopMonitoringInventory()
+        environment.workspace.stopMonitoring()
+    }
+
+    private func receive(_ event: WindowServerInventoryEvent) {
+        switch event {
+        case .created, .destroyed:
+            scheduleInventoryRefresh(.reconcile)
+        case let .focused(wid):
+            Task { [weak self] in
+                guard let self,
+                      let identity = await self.environment.engine.inventoryIdentity(for: wid) else { return }
+                self.run(await self.environment.engine.receiveInventory(.focused(identity)))
+            }
+        case let .semanticsInvalidated(wid):
+            invalidateSemantics(wid: wid, pid: nil)
+        case .activeSpaceChanged:
+            scheduleInventoryRefresh(.replace)
+        }
+    }
+
+    private func receive(_ event: AccessibilityInventoryEvent) {
+        switch event {
+        case .created, .destroyed:
+            scheduleInventoryRefresh(.reconcile)
+        case let .focused(pid, wid):
+            if let wid { invalidateSemantics(wid: wid, pid: pid) }
+        case let .semanticsChanged(pid, wid):
+            if let wid { invalidateSemantics(wid: wid, pid: pid) }
+        }
+    }
+
+    private func receive(_ event: WorkspaceApplicationEvent) {
+        if case let .launched(facts) = event {
+            environment.accessibility.observeApplication(pid: facts.pid)
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            self.run(await self.environment.engine.receiveInventory(.workspaceChanged(event)))
+        }
+        switch event {
+        case .launched, .terminated:
+            scheduleInventoryRefresh(.reconcile)
+        case .snapshot, .hidden, .activated:
+            break
+        }
+    }
+
+    private func invalidateSemantics(wid: WindowID, pid: ProcessID?) {
+        Task { [weak self] in
+            guard let self,
+                  let identity = await self.environment.engine.inventoryIdentity(for: wid, pid: pid) else {
+                return
+            }
+            self.run(await self.environment.engine.receiveInventory(.semanticsInvalidated(identity)))
+        }
+    }
+
+    private func enrich(_ identities: [WindowIdentity]) {
+        for identity in identities {
+            Task { [weak self] in
+                guard let self else { return }
+                let patch = await self.environment.accessibility.enrichment(for: identity)
+                self.run(await self.environment.engine.receiveInventory(
+                    .semanticsChanged(identity, patch)
+                ))
+            }
+        }
+    }
+
+    private func scheduleInventoryRefresh(_ mode: InventoryRefreshMode) {
+        guard isMonitoringInventory else { return }
+        if mode == .replace || pendingInventoryRefresh == nil {
+            pendingInventoryRefresh = mode
+        }
+        inventoryRefreshTask?.cancel()
+        inventoryRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(75))
+            } catch {
+                return
+            }
+            guard let self, self.isMonitoringInventory,
+                  let mode = self.pendingInventoryRefresh else { return }
+            self.pendingInventoryRefresh = nil
+            guard let snapshot = await self.environment.windowServer.activeSpaceSnapshot() else { return }
+            let event: InventoryEvent = mode == .replace
+                ? .replaceActiveSpace(snapshot)
+                : .reconcileActiveSpace(snapshot)
+            self.run(await self.environment.engine.receiveInventory(event))
         }
     }
 

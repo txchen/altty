@@ -6,6 +6,7 @@ struct AppEnvironment {
     let input: any InputAdapter
     let windowServer: any WindowServerAdapter
     let accessibility: any AccessibilityAdapter
+    let workspace: any WorkspaceAdapter
     let inventory: any InventoryAdapter
     let switching: any SwitchingAdapter
     let exceptions: any ExceptionsAdapter
@@ -14,12 +15,14 @@ struct AppEnvironment {
     let diagnostics: any DiagnosticsAdapter
 
     static func production() -> AppEnvironment {
-        AppEnvironment(
-            engine: SwitcherEngine(),
+        let inventory = WindowInventory()
+        return AppEnvironment(
+            engine: SwitcherEngine(inventory: inventory),
             input: SystemInputAdapter(),
             windowServer: SystemWindowServerAdapter(),
             accessibility: SystemAccessibilityAdapter(),
-            inventory: WindowInventory(),
+            workspace: SystemWorkspaceAdapter(),
+            inventory: inventory,
             switching: SystemSwitchingAdapter(),
             exceptions: DefaultExceptionsAdapter(),
             persistence: UserDefaultsPersistenceAdapter(),
