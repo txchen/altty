@@ -19,7 +19,7 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 3. Shortcuts remain disabled until both dependencies report ready.
 4. Readiness starts the event-driven inventory: SkyLight replaces or reconciles the Active Space WID set, AX lazily enriches requested identities off-main, and Workspace owns application lifecycle/visibility facts.
 5. Adapter callbacks become immutable inventory events. `WindowInventory` validates WID, PID and generation before updating actor-isolated records, and `SwitcherEngine` remains the observable test seam.
-6. AppKit Presentation renders immutable engine state in the menu and Settings shell.
+6. AppKit Presentation renders immutable engine state in the menu, Settings shell and non-activating switcher panel.
 
 ## Readiness Lifecycle
 
@@ -38,7 +38,9 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 - Workspace launch, termination, activation and hidden/unhidden notifications update only application-owned fields. Hidden-app and minimized real windows remain eligible.
 - Active Space replacement increments the inventory generation and discards the prior records. Within a generation, events must match WID and PID, and a newly created/reused WID starts without prior metadata or MRU. Cold start keeps visible candidates in front-to-back order and defers minimized/hidden candidates with deterministic WID ordering.
 
-## Current Constraints
+## Interactive All-Windows Session
 
-- The default Option-Tab path performs immediate All-Windows selection and verified exact-WID focus. Delayed panel presentation, repeated navigation and longer interactive sessions arrive in later implementation tickets.
-- No thumbnails are supported by design.
+- Option-Tab immediately snapshots the Active Space candidate order, invocation PID and temporary selection. Quick release begins verified exact-WID focus without presenting UI.
+- A session that remains active for 125 ms presents a compact vertical list. Repeated Tab and Shift-Tab, mouse hover and wheel update only the temporary selection; release or click confirms, while Escape, outside click and lost interaction context cancel.
+- Session rows remain stable under ordinary inventory changes and new windows. Destroyed candidates are removed, with selection advancing safely, and generation changes fail closed.
+- No thumbnails or live focus previews are supported by design.

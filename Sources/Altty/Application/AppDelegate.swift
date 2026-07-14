@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var inventoryGeneration: InventoryGeneration = 0
     private var semanticInvalidationTasks: [WindowIdentity: Task<Void, Never>] = [:]
     private var shortcutInvocationTask: Task<Void, Never>?
+    private var switcherPanelTask: Task<Void, Never>?
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -18,6 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         environment.presentation.install { [weak self] command in self?.handle(command) }
+        environment.presentation.installSwitcherInteractions { [weak self] event in
+            guard let self else { return }
+            self.run(self.environment.engine.receiveSession(event))
+        }
         environment.input.install { [weak self] event in self?.receive(event) }
         environment.accessibility.startMonitoringAvailability { [weak self] availability in
             self?.receive(.accessibilityChanged(availability))
@@ -33,6 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        shortcutInvocationTask?.cancel()
+        switcherPanelTask?.cancel()
+        environment.presentation.dismissSwitcherPanel()
         environment.input.setShortcutsEnabled(false)
         stopInventoryObservation()
         environment.accessibility.stopMonitoringAvailability()
@@ -51,10 +59,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func receive(_ event: ShortcutEvent) {
         switch event {
-        case .allWindowsPressed:
+        case let .allWindowsPressed(direction):
+            let priorInvocation = shortcutInvocationTask
             shortcutInvocationTask = Task { [weak self] in
+                await priorInvocation?.value
                 guard let self else { return }
-                self.run(await self.environment.engine.beginAllWindowsSwitch())
+                if self.environment.engine.activeSwitchSession == nil {
+                    self.run(await self.environment.engine.beginAllWindowsSwitch(
+                        direction: direction
+                    ))
+                } else {
+                    self.run(self.environment.engine.receiveSession(.navigate(direction)))
+                }
                 self.refreshPresentation()
             }
         case .holdModifiersReleased:
@@ -65,6 +81,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.run(self.environment.engine.confirmAllWindowsSwitch())
                 self.refreshPresentation()
+            }
+        case let .cancel(reason):
+            let invocation = shortcutInvocationTask
+            shortcutInvocationTask = nil
+            Task { [weak self] in
+                await invocation?.value
+                guard let self else { return }
+                self.run(self.environment.engine.receiveSession(.cancel(reason)))
             }
         }
     }
@@ -87,6 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case let .setShortcutsEnabled(enabled):
                 environment.input.setShortcutsEnabled(enabled)
             case .endActiveSession:
+                switcherPanelTask?.cancel()
+                switcherPanelTask = nil
+                environment.presentation.dismissSwitcherPanel()
                 environment.switching.endActiveSession()
             case .releaseAccessibilityObservers:
                 environment.accessibility.releaseObservers()
@@ -115,12 +142,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
                 }
             case let .deminimizeWindow(identity):
+                dismissSwitcherPanelForConfirmation()
                 Task { [weak self] in
                     guard let self else { return }
                     let succeeded = await self.environment.accessibility.deminimize(identity)
                     self.receive(.deminimizeCompleted(identity, succeeded: succeeded))
                 }
             case let .focusWindow(identity):
+                dismissSwitcherPanelForConfirmation()
                 focusTarget(identity)
             case let .verifyFocus(identity):
                 verifyFocus(identity)
@@ -128,8 +157,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 recoverFailedFocus(target: target, origin: origin)
             case let .presentSwitchingError(error):
                 environment.presentation.presentSwitchingError(error)
+            case let .scheduleSwitcherPanel(delayMilliseconds):
+                scheduleSwitcherPanel(delayMilliseconds: delayMilliseconds)
+            case let .showSwitcherPanel(state):
+                environment.presentation.showSwitcherPanel(state: state)
+            case let .updateSwitcherPanel(state):
+                environment.presentation.updateSwitcherPanel(state: state)
             }
         }
+    }
+
+    private func scheduleSwitcherPanel(delayMilliseconds: Int) {
+        switcherPanelTask?.cancel()
+        switcherPanelTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(delayMilliseconds))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            self.switcherPanelTask = nil
+            self.run(self.environment.engine.receiveSession(.panelDelayElapsed))
+        }
+    }
+
+    private func dismissSwitcherPanelForConfirmation() {
+        switcherPanelTask?.cancel()
+        switcherPanelTask = nil
+        environment.presentation.dismissSwitcherPanel()
     }
 
     private func focusTarget(_ identity: WindowIdentity) {

@@ -4,15 +4,15 @@
 
 **Blocked by:** 13 — Switch immediately with the All-Windows shortcut
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The compact panel appears only when a session remains active for approximately 100–150 ms; quick taps never flash it.
-- [ ] A session freezes mode, invocation PID, ordered `WindowSnapshot` rows and temporary selection while allowing destroyed candidates to be removed.
-- [ ] Repeated Tab cycles forward, Shift-Tab cycles backward and both directions wrap.
-- [ ] Releasing all configured modifiers confirms exactly one focus transaction.
-- [ ] Escape, outside click, lost interaction context and abnormal shortcut interruption cancel, close the panel and preserve focus/MRU.
-- [ ] Hover changes the shared temporary selection, click confirms immediately and mouse wheel cycles with wraparound.
-- [ ] Navigation never focuses or previews a candidate; the invoking window remains frontmost until confirmation.
-- [ ] New windows and ordinary attribute changes do not insert or reorder rows mid-session; a destroyed selected row advances safely.
-- [ ] The panel shows mode/shortcut, application icon, title, application name and relevant minimized/hidden/fullscreen state in a compact vertical list with accessible selection.
-- [ ] Deterministic engine tests cover timing, stable snapshots, all navigation/cancellation paths and candidate invalidation; AppKit tests verify visible behavior without asserting private view hierarchy.
+- [x] The compact panel appears only when a session remains active for approximately 100–150 ms; quick taps never flash it.
+- [x] A session freezes mode, invocation PID, ordered `WindowSnapshot` rows and temporary selection while allowing destroyed candidates to be removed.
+- [x] Repeated Tab cycles forward, Shift-Tab cycles backward and both directions wrap.
+- [x] Releasing all configured modifiers confirms exactly one focus transaction.
+- [x] Escape, outside click, lost interaction context and abnormal shortcut interruption cancel, close the panel and preserve focus/MRU.
+- [x] Hover changes the shared temporary selection, click confirms immediately and mouse wheel cycles with wraparound.
+- [x] Navigation never focuses or previews a candidate; the invoking window remains frontmost until confirmation.
+- [x] New windows and ordinary attribute changes do not insert or reorder rows mid-session; a destroyed selected row advances safely.
+- [x] The panel shows mode/shortcut, application icon, title, application name and relevant minimized/hidden/fullscreen state in a compact vertical list with accessible selection.
+- [x] Deterministic engine tests cover timing, stable snapshots, all navigation/cancellation paths and candidate invalidation; AppKit tests verify visible behavior without asserting private view hierarchy.

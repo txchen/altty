@@ -185,6 +185,10 @@ private final class ImmediateSwitchSmokeCoordinator {
                 guard let self else { return }
                 self.run(self.engine.confirmAllWindowsSwitch())
             }
+        case .cancel:
+            invocationTask?.cancel()
+            invocationTask = nil
+            run(engine.receiveSession(.cancel(.shortcutInterrupted)))
         }
     }
 
@@ -636,6 +640,147 @@ struct ImmediateAllWindowsSwitchTests {
         )
     }
 
+    private func makeInteractiveEngine() async -> (SwitcherEngine, [WindowIdentity]) {
+        let inventory = WindowInventory()
+        let engine = SwitcherEngine(inventory: inventory)
+        _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
+            activeSpaceIDs: [1],
+            windows: [
+                WindowServerWindow(wid: 10, pid: 100, frontToBackOrder: 0),
+                WindowServerWindow(wid: 20, pid: 200, frontToBackOrder: 1),
+                WindowServerWindow(wid: 30, pid: 300, frontToBackOrder: 2),
+            ]
+        )))
+        let identities = [
+            WindowIdentity(wid: 10, pid: 100, generation: 1),
+            WindowIdentity(wid: 20, pid: 200, generation: 1),
+            WindowIdentity(wid: 30, pid: 300, generation: 1),
+        ]
+        for (identity, title) in zip(identities, ["First", "Second", "Third"]) {
+            _ = await engine.receiveInventory(.semanticsChanged(
+                identity,
+                semantics(title: title)
+            ))
+        }
+        _ = await engine.receiveInventory(.workspaceChanged(.snapshot([
+            WorkspaceApplicationFacts(
+                pid: 100,
+                bundleIdentifier: "example.first",
+                isHidden: false,
+                isFrontmost: true
+            ),
+            WorkspaceApplicationFacts(
+                pid: 200,
+                bundleIdentifier: "example.second",
+                isHidden: false,
+                isFrontmost: false
+            ),
+            WorkspaceApplicationFacts(
+                pid: 300,
+                bundleIdentifier: "example.third",
+                isHidden: false,
+                isFrontmost: false
+            ),
+        ])))
+        _ = await engine.receiveInventory(.focused(identities[0]))
+        return (engine, identities)
+    }
+
+    @Test func heldSessionSchedulesA125MillisecondPanelWithoutFlashingForQuickTaps() async {
+        let (heldEngine, identities) = await makeInteractiveEngine()
+
+        #expect(await heldEngine.beginAllWindowsSwitch() == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        #expect(heldEngine.activeSwitchSession?.mode == .allWindows)
+        #expect(heldEngine.activeSwitchSession?.invocationPID == 100)
+        #expect(heldEngine.activeSwitchSession?.candidates.map(\.identity) == identities)
+        #expect(heldEngine.receiveSession(.panelDelayElapsed) == [
+            .showSwitcherPanel(heldEngine.activeSwitchSession!.panelState),
+        ])
+
+        let (quickEngine, _) = await makeInteractiveEngine()
+        _ = await quickEngine.beginAllWindowsSwitch()
+        #expect(quickEngine.confirmAllWindowsSwitch() == [
+            .focusWindow(WindowIdentity(wid: 20, pid: 200, generation: 1)),
+        ])
+        #expect(quickEngine.confirmAllWindowsSwitch() == [])
+        #expect(quickEngine.receiveSession(.panelDelayElapsed) == [])
+    }
+
+    @Test func reverseInvocationSelectsThePreviousWindowAndWraps() async {
+        let (engine, identities) = await makeInteractiveEngine()
+
+        _ = await engine.beginAllWindowsSwitch(direction: .backward)
+
+        #expect(engine.activeSwitchSession?.target.identity == identities[2])
+        _ = engine.receiveSession(.navigate(.backward))
+        #expect(engine.activeSwitchSession?.target.identity == identities[1])
+    }
+
+    @Test func keyboardAndWheelNavigationWrapWithoutPreviewingFocus() async {
+        let (engine, identities) = await makeInteractiveEngine()
+        _ = await engine.beginAllWindowsSwitch()
+        _ = engine.receiveSession(.panelDelayElapsed)
+
+        #expect(engine.activeSwitchSession?.target.identity == identities[1])
+        #expect(engine.receiveSession(.navigate(.forward)) == [
+            .updateSwitcherPanel(engine.activeSwitchSession!.panelState),
+        ])
+        #expect(engine.activeSwitchSession?.target.identity == identities[2])
+        _ = engine.receiveSession(.navigate(.forward))
+        #expect(engine.activeSwitchSession?.target.identity == identities[0])
+        _ = engine.receiveSession(.navigate(.backward))
+        #expect(engine.activeSwitchSession?.target.identity == identities[2])
+        #expect(engine.activeSwitchSession?.phase == .waitingForModifierRelease)
+    }
+
+    @Test func hoverSharesSelectionClickConfirmsAndCancellationPreservesMRU() async {
+        let (clickEngine, identities) = await makeInteractiveEngine()
+        _ = await clickEngine.beginAllWindowsSwitch()
+        _ = clickEngine.receiveSession(.panelDelayElapsed)
+
+        #expect(clickEngine.receiveSession(.select(identities[2])) == [
+            .updateSwitcherPanel(clickEngine.activeSwitchSession!.panelState),
+        ])
+        #expect(clickEngine.receiveSession(.confirm(identities[2])) == [
+            .focusWindow(identities[2]),
+        ])
+
+        for reason in SwitcherCancellationReason.allCases {
+            let (engine, _) = await makeInteractiveEngine()
+            _ = await engine.beginAllWindowsSwitch()
+            _ = engine.receiveSession(.panelDelayElapsed)
+            #expect(engine.receiveSession(.cancel(reason)) == [.endActiveSession])
+            #expect(engine.activeSwitchSession == nil)
+            #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10, 20, 30])
+        }
+    }
+
+    @Test func frozenRowsIgnoreInsertionsAndMutationsWhileDestroyedSelectionAdvances() async {
+        let (engine, identities) = await makeInteractiveEngine()
+        _ = await engine.beginAllWindowsSwitch()
+        _ = engine.receiveSession(.panelDelayElapsed)
+        let capturedRows = engine.activeSwitchSession?.candidates
+
+        let inserted = WindowIdentity(wid: 40, pid: 400, generation: 1)
+        #expect(await engine.receiveInventory(.created(
+            WindowServerWindow(wid: 40, pid: 400, frontToBackOrder: 0),
+            generation: 1
+        )) == [.enrichWindows([inserted])])
+        _ = await engine.receiveInventory(.semanticsChanged(
+            identities[2],
+            semantics(title: "Changed", minimized: true)
+        ))
+        #expect(engine.activeSwitchSession?.candidates == capturedRows)
+
+        #expect(await engine.receiveInventory(.destroyed(identities[1])) == [
+            .updateSwitcherPanel(engine.activeSwitchSession!.panelState),
+        ])
+        #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [identities[0], identities[2]])
+        #expect(engine.activeSwitchSession?.target.identity == identities[2])
+    }
+
     @Test func modifierReleaseFocusesTheWindowAfterTheCurrentMRUItemWithWraparound() async {
         let inventory = WindowInventory()
         let engine = SwitcherEngine(inventory: inventory)
@@ -656,7 +801,9 @@ struct ImmediateAllWindowsSwitchTests {
         let current = WindowIdentity(wid: 30, pid: 300, generation: 1)
         _ = await engine.receiveInventory(.focused(current))
 
-        #expect(await engine.beginAllWindowsSwitch() == [])
+        #expect(await engine.beginAllWindowsSwitch() == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
         #expect(engine.activeSwitchSession?.target.identity.wid == 10)
         #expect(engine.confirmAllWindowsSwitch() == [
             .focusWindow(WindowIdentity(wid: 10, pid: 100, generation: 1)),
@@ -682,7 +829,9 @@ struct ImmediateAllWindowsSwitchTests {
         ))
         _ = await engine.receiveInventory(.focused(origin))
 
-        #expect(await engine.beginAllWindowsSwitch() == [])
+        #expect(await engine.beginAllWindowsSwitch() == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
         #expect(engine.confirmAllWindowsSwitch() == [.deminimizeWindow(target)])
         #expect(await engine.receiveSwitching(.deminimizeCompleted(target, succeeded: true)) == [
             .focusWindow(target),
@@ -869,7 +1018,7 @@ struct ImmediateAllWindowsSwitchTests {
         #expect(engine.confirmAllWindowsSwitch() == [])
     }
 
-    @Test func targetDestructionBeforeModifierReleaseCancelsWithoutFocusingAStaleWID() async {
+    @Test func targetDestructionBeforeModifierReleaseAdvancesWithoutFocusingAStaleWID() async {
         let inventory = WindowInventory()
         let engine = SwitcherEngine(inventory: inventory)
         _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
@@ -886,9 +1035,9 @@ struct ImmediateAllWindowsSwitchTests {
         _ = await engine.receiveInventory(.focused(origin))
         _ = await engine.beginAllWindowsSwitch()
 
-        #expect(await engine.receiveInventory(.destroyed(target)) == [.endActiveSession])
-        #expect(engine.activeSwitchSession == nil)
-        #expect(engine.confirmAllWindowsSwitch() == [])
+        #expect(await engine.receiveInventory(.destroyed(target)) == [])
+        #expect(engine.activeSwitchSession?.target.identity == origin)
+        #expect(engine.confirmAllWindowsSwitch() == [.focusWindow(origin)])
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10])
     }
 
@@ -913,11 +1062,9 @@ struct ImmediateAllWindowsSwitchTests {
         #expect(await engine.receiveInventory(.created(
             WindowServerWindow(wid: 20, pid: 201, frontToBackOrder: 0),
             generation: 1
-        )) == [
-            .enrichWindows([replacement]),
-            .endActiveSession,
-        ])
-        #expect(engine.activeSwitchSession == nil)
+        )) == [.enrichWindows([replacement])])
+        #expect(engine.activeSwitchSession?.target.identity == origin)
+        #expect(engine.receiveSession(.cancel(.shortcutInterrupted)) == [.endActiveSession])
 
         _ = await engine.receiveInventory(.semanticsChanged(
             replacement,
@@ -961,4 +1108,80 @@ struct ImmediateAllWindowsSwitchTests {
         #expect(engine.confirmAllWindowsSwitch() == [.focusWindow(target)])
     }
 
+}
+
+@MainActor
+struct SwitcherPanelTests {
+    private func window(
+        wid: WindowID,
+        title: String,
+        minimized: Bool = false,
+        hidden: Bool = false,
+        fullscreen: Bool = false
+    ) -> SwitchableWindow {
+        SwitchableWindow(
+            wid: wid,
+            pid: ProcessID(120_000 + Int32(wid)),
+            generation: 1,
+            title: title,
+            titleIsStale: false,
+            isMinimized: minimized,
+            isFullscreen: fullscreen,
+            applicationIsHidden: hidden,
+            applicationIsFrontmost: false,
+            bundleIdentifier: "example.app.\(wid)"
+        )
+    }
+
+    @Test func appKitPanelExposesVisibleContentSelectionAndMouseActions() {
+        _ = NSApplication.shared
+        let first = window(wid: 10, title: "First", minimized: true)
+        let second = window(wid: 20, title: "Second", hidden: true, fullscreen: true)
+        let state = SwitcherPanelState(
+            mode: .allWindows,
+            candidates: [first, second],
+            selectedIdentity: second.identity
+        )
+        let panel = SwitcherPanelController()
+        var interactions: [SwitcherSessionEvent] = []
+        panel.onInteraction = { interactions.append($0) }
+
+        panel.show(state: state)
+        #expect(panel.observedState == SwitcherPanelObservedState(
+            isVisible: true,
+            title: "All Windows",
+            shortcut: "⌥Tab",
+            rowCount: 2,
+            selectedIdentity: second.identity,
+            rows: [
+                SwitcherPanelObservedRow(
+                    identity: first.identity,
+                    title: "First",
+                    applicationName: "example.app.10",
+                    badges: ["Minimized"],
+                    showsApplicationIcon: true
+                ),
+                SwitcherPanelObservedRow(
+                    identity: second.identity,
+                    title: "Second",
+                    applicationName: "example.app.20",
+                    badges: ["Hidden", "Full Screen"],
+                    showsApplicationIcon: true
+                ),
+            ]
+        ))
+
+        panel.hover(row: 0)
+        panel.click(row: 1)
+        panel.scroll(direction: .backward)
+        #expect(interactions == [
+            .select(first.identity),
+            .confirm(second.identity),
+            .navigate(.backward),
+        ])
+
+        panel.dismiss()
+        #expect(!panel.observedState.isVisible)
+        #expect(panel.observedState.rowCount == 0)
+    }
 }

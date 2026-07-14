@@ -3,8 +3,12 @@ import AppKit
 @MainActor
 protocol PresentationAdapter: AnyObject {
     func install(onCommand: @escaping (SwitcherCommand) -> Void)
+    func installSwitcherInteractions(onInteraction: @escaping (SwitcherSessionEvent) -> Void)
     func update(state: SwitcherPresentationState)
     func presentSettings(state: SwitcherPresentationState)
+    func showSwitcherPanel(state: SwitcherPanelState)
+    func updateSwitcherPanel(state: SwitcherPanelState)
+    func dismissSwitcherPanel()
     func presentSwitchingError(_ error: SwitchingError)
     func openReleasesPage()
 }
@@ -15,10 +19,15 @@ final class AppKitPresentationAdapter: PresentationAdapter {
     private var switchingErrorPanel: NSPanel?
     private lazy var menuBar = MenuBarController { [weak self] command in self?.onCommand?(command) }
     private lazy var settings = SettingsWindowController { [weak self] command in self?.onCommand?(command) }
+    private lazy var switcherPanel = SwitcherPanelController()
 
     func install(onCommand: @escaping (SwitcherCommand) -> Void) {
         self.onCommand = onCommand
         menuBar.install()
+    }
+
+    func installSwitcherInteractions(onInteraction: @escaping (SwitcherSessionEvent) -> Void) {
+        switcherPanel.onInteraction = onInteraction
     }
 
     func update(state: SwitcherPresentationState) {
@@ -27,6 +36,12 @@ final class AppKitPresentationAdapter: PresentationAdapter {
     }
 
     func presentSettings(state: SwitcherPresentationState) { settings.show(state: state) }
+
+    func showSwitcherPanel(state: SwitcherPanelState) { switcherPanel.show(state: state) }
+
+    func updateSwitcherPanel(state: SwitcherPanelState) { switcherPanel.update(state: state) }
+
+    func dismissSwitcherPanel() { switcherPanel.dismiss() }
 
     func presentSwitchingError(_: SwitchingError) {
         switchingErrorPanel?.orderOut(nil)
