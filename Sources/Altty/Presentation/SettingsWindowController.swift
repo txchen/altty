@@ -1,6 +1,15 @@
 import AppKit
 import Carbon
 
+private extension ListDensity {
+    var title: String {
+        switch self {
+        case .compact: "Compact"
+        case .comfortable: "Comfortable"
+        }
+    }
+}
+
 struct ProductInformation: Equatable {
     let name: String
     let version: String
@@ -30,6 +39,9 @@ struct SettingsWindowObservedState: Equatable {
     let generalInlineMessage: String?
     let productSummary: String
     let sidebarHasKeyboardFocus: Bool
+    let sidebarAccessibilityLabel: String?
+    let focusedAccessibilityLabel: String?
+    let showsLoginItemsRecovery: Bool
 }
 
 @MainActor
@@ -52,8 +64,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let accessibilityDetailLabel = NSTextField(wrappingLabelWithString: "Checking Accessibility permission.")
     private let skyLightStatusLabel = NSTextField(labelWithString: "SkyLight: Checking…")
     private let skyLightDetailLabel = NSTextField(wrappingLabelWithString: "Checking WindowServer capability.")
-    private let accessibilityButton = NSButton(title: "Grant Accessibility…", target: nil, action: #selector(requestAccessibility))
-    private let recheckButton = NSButton(title: "Check Readiness", target: nil, action: #selector(recheck))
+    private let accessibilityButton = SettingsFocusableButton(title: "Grant Accessibility…", target: nil, action: #selector(requestAccessibility))
+    private let recheckButton = SettingsFocusableButton(title: "Check Readiness", target: nil, action: #selector(recheck))
     private lazy var launchAtLoginCheckbox = NSButton(
         checkboxWithTitle: "Launch Altty at login",
         target: self,
@@ -74,6 +86,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         return control
     }()
     private let generalMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private lazy var openLoginItemsButton = NSButton(
+        title: "Open Login Items Settings…",
+        target: self,
+        action: #selector(openLoginItemsSettings)
+    )
     private let contentContainer = NSView()
     private let sidebar = NSTableView()
     private let shortcutErrorLabel = NSTextField(wrappingLabelWithString: "")
@@ -118,9 +135,16 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         window.title = "Altty Settings"
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 680, height: 600)
+        window.autorecalculatesKeyViewLoop = false
         super.init(window: window)
         accessibilityButton.target = self
         recheckButton.target = self
+        accessibilityButton.setAccessibilityLabel("Grant Accessibility Permission")
+        recheckButton.setAccessibilityLabel("Check Altty readiness")
+        launchAtLoginCheckbox.setAccessibilityLabel("Launch Altty at login")
+        visibleRowsPopUp.setAccessibilityLabel("Visible switcher rows")
+        densityPopUp.setAccessibilityLabel("Switcher row spacing")
+        openLoginItemsButton.setAccessibilityLabel("Open Login Items Settings")
         configureSidebar(on: window)
         showPane(.general)
     }
@@ -133,7 +157,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             generalSettings: displayedGeneralSettings,
             generalInlineMessage: generalInlineMessage,
             productSummary: productInformation.summary,
-            sidebarHasKeyboardFocus: window?.firstResponder === sidebar
+            sidebarHasKeyboardFocus: window?.firstResponder === sidebar,
+            sidebarAccessibilityLabel: sidebar.accessibilityLabel(),
+            focusedAccessibilityLabel: (window?.firstResponder as? NSView)?
+                .accessibilityLabel(),
+            showsLoginItemsRecovery: !openLoginItemsButton.isHidden
         )
     }
 
@@ -244,6 +272,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             generalMessageLabel.font = .systemFont(ofSize: 12)
             generalMessageLabel.maximumNumberOfLines = 4
             stack.addArrangedSubview(generalMessageLabel)
+            stack.addArrangedSubview(openLoginItemsButton)
+            configureGeneralKeyViewLoop()
         } else if pane == .shortcuts {
             stack.addArrangedSubview(shortcutRow(
                 title: SwitcherMode.allWindows.title,
@@ -319,11 +349,20 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     @objc private func openProject() { performAboutAction(.project) }
     @objc private func openSupport() { performAboutAction(.support) }
     @objc private func checkForUpdates() { performAboutAction(.checkForUpdates) }
+    @objc private func openLoginItemsSettings() { onCommand(.openLoginItemsSettings) }
+
+    func advanceKeyboardFocus() {
+        if window?.firstResponder === sidebar {
+            window?.makeFirstResponder(accessibilityButton)
+        } else {
+            window?.selectNextKeyView(window?.firstResponder)
+        }
+    }
 
     func performAboutAction(_ action: SettingsAboutAction) {
         switch action {
-        case .project: onCommand(.openProject)
-        case .support: onCommand(.openSupport)
+        case .project: onCommand(.openExternalPage(.project))
+        case .support: onCommand(.openExternalPage(.support))
         case .checkForUpdates: onCommand(.checkForUpdates)
         }
     }
@@ -356,6 +395,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         ) ?? 0)
         generalMessageLabel.stringValue = state.inlineMessage ?? ""
         generalMessageLabel.isHidden = state.inlineMessage == nil
+        openLoginItemsButton.isHidden = !state.launchAtLoginRequiresApproval
+    }
+
+    private func configureGeneralKeyViewLoop() {
+        sidebar.nextKeyView = accessibilityButton
+        accessibilityButton.nextKeyView = recheckButton
+        recheckButton.nextKeyView = launchAtLoginCheckbox
+        launchAtLoginCheckbox.nextKeyView = visibleRowsPopUp
+        visibleRowsPopUp.nextKeyView = densityPopUp
+        densityPopUp.nextKeyView = openLoginItemsButton
+        openLoginItemsButton.nextKeyView = sidebar
     }
 
     private func separator() -> NSBox {
@@ -412,6 +462,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         shortcutErrorLabel.stringValue = state.inlineMessage ?? ""
         shortcutErrorLabel.isHidden = state.inlineMessage == nil
     }
+}
+
+private final class SettingsFocusableButton: NSButton {
+    override var acceptsFirstResponder: Bool { true }
 }
 
 @MainActor

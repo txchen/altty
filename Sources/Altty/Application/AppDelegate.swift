@@ -127,10 +127,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 environment.accessibility.requestPermission()
             case .checkForUpdates:
                 environment.presentation.checkForUpdates()
-            case .openProjectPage:
-                environment.presentation.openProjectPage()
-            case .openSupportPage:
-                environment.presentation.openSupportPage()
+            case let .openExternalPage(page):
+                environment.presentation.openExternalPage(page)
+            case .openLoginItemsSettings:
+                environment.launchAtLogin.openSystemSettings()
             case .terminate:
                 NSApp.terminate(nil)
             case let .enrichWindows(identities):
@@ -191,8 +191,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 refreshPresentation()
             case let .setLaunchAtLogin(enabled):
                 do {
-                    try environment.launchAtLogin.setEnabled(enabled)
-                    run(environment.engine.receiveLaunchAtLogin(.applied(enabled)))
+                    let status = try environment.launchAtLogin.setEnabled(enabled)
+                    if enabled, status == .requiresApproval {
+                        run(environment.engine.receiveLaunchAtLogin(.requiresApproval))
+                    } else if status == (enabled ? .enabled : .disabled) {
+                        run(environment.engine.receiveLaunchAtLogin(.applied(enabled)))
+                    } else {
+                        run(environment.engine.receiveLaunchAtLogin(.failed(enabled)))
+                    }
                 } catch {
                     run(environment.engine.receiveLaunchAtLogin(.failed(enabled)))
                 }

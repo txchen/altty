@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import Testing
 @testable import Altty
 
@@ -49,6 +50,16 @@ struct SettingsPresentationTests {
         #expect(persistence.loadSettings().warning == .malformed)
         #expect(try Data(contentsOf: persistence.diagnosticSettingsURL) == malformed)
         #expect(try Data(contentsOf: url) == malformed)
+
+        let secondMalformed = Data("{different-corruption".utf8)
+        try secondMalformed.write(to: url)
+        #expect(persistence.loadSettings().warning == .malformed)
+        #expect(persistence.diagnosticSettingsURLs.count == 2)
+        #expect(Set(try persistence.diagnosticSettingsURLs.map {
+            try Data(contentsOf: $0)
+        }) == [
+            malformed, secondMalformed,
+        ])
         try? FileManager.default.removeItem(at: directory)
     }
 
@@ -102,6 +113,36 @@ struct SettingsPresentationTests {
         ])
         #expect(saveFailureEngine.presentationState.generalSettings.current == .defaults)
         #expect(saveFailureEngine.presentationState.generalSettings.inlineMessage != nil)
+    }
+
+    @Test func launchAtLoginRequiresApprovalSurfacesInlineRecovery() {
+        #expect(SystemLaunchAtLoginAdapter.mapStatus(.enabled) == .enabled)
+        #expect(SystemLaunchAtLoginAdapter.mapStatus(.notRegistered) == .disabled)
+        #expect(SystemLaunchAtLoginAdapter.mapStatus(.requiresApproval) == .requiresApproval)
+        #expect(SwitcherEngine(
+            launchAtLoginRequiresApproval: true
+        ).presentationState.generalSettings.inlineMessage?.contains("System Settings") == true)
+
+        let engine = SwitcherEngine()
+        let proposed = GeneralSettings(
+            launchAtLogin: true,
+            listPresentation: .defaults
+        )
+        _ = engine.send(.replaceGeneralSettings(proposed))
+
+        #expect(engine.receiveLaunchAtLogin(.requiresApproval) == [])
+        #expect(engine.presentationState.generalSettings.current == .defaults)
+        #expect(engine.presentationState.generalSettings.pending == nil)
+        #expect(engine.presentationState.generalSettings.launchAtLoginRequiresApproval)
+        #expect(engine.presentationState.generalSettings.inlineMessage?.contains("System Settings") == true)
+        #expect(engine.send(.openLoginItemsSettings) == [.openLoginItemsSettings])
+
+        let controller = SettingsWindowController(
+            exceptions: RecordingExceptionsAdapter()
+        ) { _ in }
+        controller.show(state: engine.presentationState)
+        #expect(controller.observedState.showsLoginItemsRecovery)
+        controller.close()
     }
 
     @Test func panelUsesInvokingWindowDisplayFallbackAndKeepsOverflowSelectionVisible() {
@@ -164,6 +205,10 @@ struct SettingsPresentationTests {
         #expect(panel.observedState.visibleRowCapacity == 6)
         #expect(panel.observedState.selectedRowIsVisible)
         #expect(panel.observedState.rows.allSatisfy { $0.usesSingleLineText })
+        #expect(panel.observedState.rows.allSatisfy {
+            $0.accessibilityLabel.contains($0.title)
+                && $0.accessibilityLabel.contains($0.applicationName)
+        })
         panel.dismiss()
     }
 
@@ -179,8 +224,8 @@ struct SettingsPresentationTests {
         #expect(openedURLs == [URL(string: "https://github.com/txchen/altty/releases/latest")!])
 
         let engine = SwitcherEngine()
-        #expect(engine.send(.openProject) == [.openProjectPage])
-        #expect(engine.send(.openSupport) == [.openSupportPage])
+        #expect(engine.send(.openExternalPage(.project)) == [.openExternalPage(.project)])
+        #expect(engine.send(.openExternalPage(.support)) == [.openExternalPage(.support)])
         #expect(engine.send(.checkForUpdates) == [.checkForUpdates])
     }
 
@@ -212,6 +257,9 @@ struct SettingsPresentationTests {
         #expect(controller.observedState.generalInlineMessage == "Recovered corrupt settings inline.")
         #expect(controller.observedState.productSummary == "Altty 1.2.3 (42)")
         #expect(controller.observedState.sidebarHasKeyboardFocus)
+        #expect(controller.observedState.sidebarAccessibilityLabel == "Settings sections")
+        controller.advanceKeyboardFocus()
+        #expect(controller.observedState.focusedAccessibilityLabel == "Grant Accessibility Permission")
 
         let proposed = GeneralSettings(
             launchAtLogin: true,
@@ -226,11 +274,31 @@ struct SettingsPresentationTests {
         controller.performAboutAction(.checkForUpdates)
         #expect(commands == [
             .replaceGeneralSettings(proposed),
-            .openProject,
-            .openSupport,
+            .openExternalPage(.project),
+            .openExternalPage(.support),
             .checkForUpdates,
         ])
         controller.close()
+    }
+
+    @Test func projectAndSupportActionsOpenTheirExactBrowserDestinations() {
+        let applications = RecordingExceptionsAdapter()
+        var openedURLs: [URL] = []
+        let presentation = AppKitPresentationAdapter(
+            exceptions: applications,
+            openURL: { url in
+                openedURLs.append(url)
+                return true
+            }
+        )
+
+        presentation.openExternalPage(.project)
+        presentation.openExternalPage(.support)
+
+        #expect(openedURLs == [
+            URL(string: "https://github.com/txchen/altty")!,
+            URL(string: "https://github.com/txchen/altty/issues")!,
+        ])
     }
 
     @Test func menuBarShowsStatusAndOnlyProductionLevelActions() {

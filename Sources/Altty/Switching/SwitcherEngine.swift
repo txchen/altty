@@ -99,8 +99,8 @@ enum SwitcherCommand: Equatable, Sendable {
     case openSettings
     case requestAccessibility
     case checkForUpdates
-    case openProject
-    case openSupport
+    case openExternalPage(ExternalPage)
+    case openLoginItemsSettings
     case quit
     case recheckReadiness
     case updateShortcut(SwitcherMode, ShortcutBinding)
@@ -128,8 +128,8 @@ enum SwitcherEffect: Equatable, Sendable {
     case presentSettings
     case requestAccessibility
     case checkForUpdates
-    case openProjectPage
-    case openSupportPage
+    case openExternalPage(ExternalPage)
+    case openLoginItemsSettings
     case terminate
     case enrichWindows([WindowIdentity])
     case startInventoryObservation
@@ -153,6 +153,7 @@ enum SwitcherEffect: Equatable, Sendable {
 enum LaunchAtLoginEvent: Equatable, Sendable {
     case applied(Bool)
     case failed(Bool)
+    case requiresApproval
 }
 
 enum SwitchingError: Equatable, Sendable {
@@ -295,6 +296,7 @@ enum SwitchingEvent: Equatable, Sendable {
 /// concrete AppKit and system adapter types remain outside it.
 @MainActor
 final class SwitcherEngine {
+    private static let launchAtLoginApprovalMessage = "macOS requires approval for Altty in System Settings > General > Login Items. Approve Altty, then try again."
     private let inventory: any InventoryAdapter
     private let clock: any SwitcherClock
     private var exceptionPolicy: ExceptionPolicy
@@ -315,6 +317,7 @@ final class SwitcherEngine {
         shortcuts: ShortcutPair = .defaults,
         exceptionRules: [ExceptionRule] = [],
         generalSettings: GeneralSettings = .defaults,
+        launchAtLoginRequiresApproval: Bool = false,
         settingsWarning: String? = nil
     ) {
         self.inventory = inventory
@@ -335,8 +338,11 @@ final class SwitcherEngine {
         presentationState.generalSettings = GeneralSettingsState(
             current: generalSettings,
             pending: nil,
-            error: nil,
-            recoveryWarning: settingsWarning
+            error: launchAtLoginRequiresApproval
+                ? Self.launchAtLoginApprovalMessage
+                : nil,
+            recoveryWarning: settingsWarning,
+            launchAtLoginRequiresApproval: launchAtLoginRequiresApproval
         )
     }
 
@@ -645,10 +651,10 @@ final class SwitcherEngine {
             return [.requestAccessibility, .checkAccessibility]
         case .checkForUpdates:
             return [.checkForUpdates]
-        case .openProject:
-            return [.openProjectPage]
-        case .openSupport:
-            return [.openSupportPage]
+        case let .openExternalPage(page):
+            return [.openExternalPage(page)]
+        case .openLoginItemsSettings:
+            return [.openLoginItemsSettings]
         case .quit:
             return [.terminate]
         case .recheckReadiness:
@@ -667,13 +673,19 @@ final class SwitcherEngine {
         case let .applied(enabled):
             guard let pending = presentationState.generalSettings.pending,
                   pending.launchAtLogin == enabled else { return [] }
-            return [.persistSettings(settingsSnapshot(general: pending))]
+            presentationState.generalSettings.launchAtLoginRequiresApproval = false
+            return [.persistSettings(settingsSnapshot(source: .current, general: pending))]
         case let .failed(enabled):
             guard presentationState.generalSettings.pending?.launchAtLogin == enabled else {
                 return []
             }
             presentationState.generalSettings.pending = nil
             presentationState.generalSettings.error = "Launch at login could not be changed. The previous setting remains active."
+            return []
+        case .requiresApproval:
+            presentationState.generalSettings.pending = nil
+            presentationState.generalSettings.launchAtLoginRequiresApproval = true
+            presentationState.generalSettings.error = Self.launchAtLoginApprovalMessage
             return []
         }
     }
@@ -684,13 +696,7 @@ final class SwitcherEngine {
             presentationState.shortcutSettings.pending = pair
             presentationState.shortcutSettings.error = nil
             presentationState.shortcutSettings.recoveryWarning = nil
-            return [.persistSettings(SettingsSnapshot(
-                shortcuts: pair,
-                exceptionRules: presentationState.exceptionSettings.pending
-                    ?? presentationState.exceptionSettings.current,
-                general: presentationState.generalSettings.pending
-                    ?? presentationState.generalSettings.current
-            ))]
+            return [.persistSettings(settingsSnapshot(shortcuts: pair))]
         case let .failed(pair, error):
             if presentationState.shortcutSettings.pending == pair {
                 presentationState.shortcutSettings.pending = nil
@@ -705,10 +711,9 @@ final class SwitcherEngine {
             presentationState.shortcutSettings.pending = .defaults
             presentationState.shortcutSettings.error = nil
             presentationState.shortcutSettings.recoveryWarning = "Saved shortcuts were unavailable, so Altty restored the defaults. \(error.message)"
-            return [.persistSettings(SettingsSnapshot(
-                shortcuts: .defaults,
-                exceptionRules: presentationState.exceptionSettings.current,
-                general: presentationState.generalSettings.current
+            return [.persistSettings(settingsSnapshot(
+                source: .current,
+                shortcuts: .defaults
             ))]
         }
     }
@@ -740,6 +745,7 @@ final class SwitcherEngine {
                 presentationState.generalSettings.pending = nil
                 presentationState.generalSettings.error = nil
                 presentationState.generalSettings.recoveryWarning = nil
+                presentationState.generalSettings.launchAtLoginRequiresApproval = false
             }
             return effects
         case let .failed(snapshot):
@@ -803,13 +809,7 @@ final class SwitcherEngine {
         presentationState.exceptionSettings.pending = normalized
         presentationState.exceptionSettings.error = nil
         guard activeSwitchSession == nil else { return [] }
-        return [.persistSettings(SettingsSnapshot(
-            shortcuts: presentationState.shortcutSettings.pending
-                ?? presentationState.shortcutSettings.current,
-            exceptionRules: normalized,
-            general: presentationState.generalSettings.pending
-                ?? presentationState.generalSettings.current
-        ))]
+        return [.persistSettings(settingsSnapshot(exceptionRules: normalized))]
     }
 
     private func replaceGeneralSettings(_ settings: GeneralSettings) -> [SwitcherEffect] {
@@ -828,15 +828,30 @@ final class SwitcherEngine {
         if settings.launchAtLogin != presentationState.generalSettings.current.launchAtLogin {
             return [.setLaunchAtLogin(settings.launchAtLogin)]
         }
-        return [.persistSettings(settingsSnapshot(general: settings))]
+        return [.persistSettings(settingsSnapshot(source: .current, general: settings))]
     }
 
-    private func settingsSnapshot(general: GeneralSettings? = nil) -> SettingsSnapshot {
-        SettingsSnapshot(
-            shortcuts: presentationState.shortcutSettings.current,
-            exceptionRules: presentationState.exceptionSettings.current,
+    private enum SettingsSnapshotSource {
+        case current
+        case displayed
+    }
+
+    private func settingsSnapshot(
+        source: SettingsSnapshotSource = .displayed,
+        shortcuts: ShortcutPair? = nil,
+        exceptionRules: [ExceptionRule]? = nil,
+        general: GeneralSettings? = nil
+    ) -> SettingsSnapshot {
+        let usesPending = source == .displayed
+        return SettingsSnapshot(
+            shortcuts: shortcuts
+                ?? (usesPending ? presentationState.shortcutSettings.pending : nil)
+                ?? presentationState.shortcutSettings.current,
+            exceptionRules: exceptionRules
+                ?? (usesPending ? presentationState.exceptionSettings.pending : nil)
+                ?? presentationState.exceptionSettings.current,
             general: general
-                ?? presentationState.generalSettings.pending
+                ?? (usesPending ? presentationState.generalSettings.pending : nil)
                 ?? presentationState.generalSettings.current
         )
     }
@@ -850,12 +865,7 @@ final class SwitcherEngine {
         if let pending = presentationState.shortcutSettings.pending {
             effects.append(.replaceShortcuts(pending))
         } else if let pending = presentationState.exceptionSettings.pending {
-            effects.append(.persistSettings(SettingsSnapshot(
-                shortcuts: presentationState.shortcutSettings.current,
-                exceptionRules: pending,
-                general: presentationState.generalSettings.pending
-                    ?? presentationState.generalSettings.current
-            )))
+            effects.append(.persistSettings(settingsSnapshot(exceptionRules: pending)))
         }
         return effects
     }

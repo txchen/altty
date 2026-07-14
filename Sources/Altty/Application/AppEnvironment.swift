@@ -21,8 +21,9 @@ struct AppEnvironment {
         let settings = persistence.loadSettings()
         let workspace = SystemWorkspaceAdapter()
         let launchAtLogin = SystemLaunchAtLoginAdapter()
+        let launchAtLoginStatus = launchAtLogin.status
         let generalSettings = GeneralSettings(
-            launchAtLogin: launchAtLogin.isEnabled,
+            launchAtLogin: launchAtLoginStatus == .enabled,
             listPresentation: settings.snapshot.general.listPresentation
         )
         return AppEnvironment(
@@ -31,6 +32,7 @@ struct AppEnvironment {
                 shortcuts: settings.snapshot.shortcuts,
                 exceptionRules: settings.snapshot.exceptionRules,
                 generalSettings: generalSettings,
+                launchAtLoginRequiresApproval: launchAtLoginStatus == .requiresApproval,
                 settingsWarning: settings.warning?.message
             ),
             input: SystemInputAdapter(shortcuts: settings.snapshot.shortcuts),

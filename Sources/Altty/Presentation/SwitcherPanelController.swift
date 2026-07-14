@@ -20,6 +20,7 @@ struct SwitcherPanelObservedRow: Equatable {
     let badges: [String]
     let showsApplicationIcon: Bool
     var usesSingleLineText: Bool = true
+    var accessibilityLabel: String = ""
 }
 
 struct SwitcherDisplay: Equatable {
@@ -117,6 +118,9 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         placePanel(state: state)
         panel.orderFrontRegardless()
         panel.contentView?.layoutSubtreeIfNeeded()
+        if tableView.selectedRow >= 0 {
+            tableView.scrollRowToVisible(tableView.selectedRow)
+        }
     }
 
     func update(state: SwitcherPanelState) {
@@ -251,14 +255,24 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         badgeLabel.setContentHuggingPriority(.required, for: .horizontal)
         badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        let accessibleBadges = badges.isEmpty ? "" : ", \(badges.joined(separator: ", "))"
+        let accessibilityLabel = "\(rowState.title), \(rowState.applicationName)\(accessibleBadges)"
         let row = SwitcherRowView(
             views: [icon, labels, NSView(), badgeLabel],
-            observedRow: observedRow(for: rowState)
+            observedRow: SwitcherPanelObservedRow(
+                identity: rowState.identity,
+                title: rowState.title,
+                applicationName: rowState.applicationName,
+                badges: badges,
+                showsApplicationIcon: icon.image != nil,
+                usesSingleLineText: title.maximumNumberOfLines == 1
+                    && subtitle.maximumNumberOfLines == 1,
+                accessibilityLabel: accessibilityLabel
+            )
         )
         row.setAccessibilityElement(true)
         row.setAccessibilityRole(.row)
-        let accessibleBadges = badges.isEmpty ? "" : ", \(badges.joined(separator: ", "))"
-        row.setAccessibilityLabel("\(rowState.title), \(rowState.applicationName)\(accessibleBadges)")
+        row.setAccessibilityLabel(accessibilityLabel)
         return row
     }
 
@@ -282,16 +296,6 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
 
     func scroll(direction: SwitchDirection) {
         onInteraction?(.navigate(direction))
-    }
-
-    private func observedRow(for row: SwitcherPanelRow) -> SwitcherPanelObservedRow {
-        SwitcherPanelObservedRow(
-            identity: row.identity,
-            title: row.title,
-            applicationName: row.applicationName,
-            badges: stateBadges(for: row),
-            showsApplicationIcon: true
-        )
     }
 
     private var selectedRowIsVisible: Bool {

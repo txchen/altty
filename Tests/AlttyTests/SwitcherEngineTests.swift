@@ -1593,14 +1593,16 @@ struct SwitcherPanelTests {
                 title: "First",
                 applicationName: "example.app.10",
                 badges: ["Minimized"],
-                showsApplicationIcon: true
+                showsApplicationIcon: true,
+                accessibilityLabel: "First, example.app.10, Minimized"
             ),
             SwitcherPanelObservedRow(
                 identity: second.identity,
                 title: "Second",
                 applicationName: "example.app.20",
                 badges: ["Hidden", "Full Screen"],
-                showsApplicationIcon: true
+                showsApplicationIcon: true,
+                accessibilityLabel: "Second, example.app.20, Hidden, Full Screen"
             ),
         ])
         #expect(observed.displayIdentifier != nil)

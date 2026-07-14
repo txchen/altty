@@ -11,8 +11,7 @@ protocol PresentationAdapter: AnyObject {
     func dismissSwitcherPanel()
     func presentSwitchingError(_ error: SwitchingError)
     func checkForUpdates()
-    func openProjectPage()
-    func openSupportPage()
+    func openExternalPage(_ page: ExternalPage)
 }
 
 @MainActor
@@ -115,11 +114,5 @@ final class AppKitPresentationAdapter: PresentationAdapter {
 
     func checkForUpdates() { updateAction.checkForUpdates() }
 
-    func openProjectPage() {
-        _ = openURL(URL(string: "https://github.com/txchen/altty")!)
-    }
-
-    func openSupportPage() {
-        _ = openURL(URL(string: "https://github.com/txchen/altty/issues")!)
-    }
+    func openExternalPage(_ page: ExternalPage) { _ = openURL(page.url) }
 }

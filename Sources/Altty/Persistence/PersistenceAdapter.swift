@@ -1,121 +1,5 @@
 import Foundation
 
-enum ListDensity: String, Codable, CaseIterable, Equatable, Sendable {
-    case compact
-    case comfortable
-
-    var title: String {
-        switch self {
-        case .compact: "Compact"
-        case .comfortable: "Comfortable"
-        }
-    }
-}
-
-struct ListPresentationPreferences: Codable, Equatable, Sendable {
-    static let defaults = ListPresentationPreferences(
-        visibleRowCount: 7,
-        density: .compact
-    )
-
-    let visibleRowCount: Int
-    let density: ListDensity
-
-    var isValid: Bool { (6...8).contains(visibleRowCount) }
-}
-
-struct GeneralSettings: Codable, Equatable, Sendable {
-    static let defaults = GeneralSettings(
-        launchAtLogin: false,
-        listPresentation: .defaults
-    )
-
-    let launchAtLogin: Bool
-    let listPresentation: ListPresentationPreferences
-
-    var isValid: Bool { listPresentation.isValid }
-}
-
-struct GeneralSettingsState: Equatable, Sendable {
-    var current: GeneralSettings
-    var pending: GeneralSettings?
-    var error: String?
-    var recoveryWarning: String?
-
-    var displayed: GeneralSettings { pending ?? current }
-    var inlineMessage: String? { error ?? recoveryWarning }
-}
-
-struct SettingsSnapshot: Codable, Equatable, Sendable {
-    static let currentVersion = 3
-    static let defaults = SettingsSnapshot(
-        shortcuts: .defaults,
-        exceptionRules: [],
-        general: .defaults
-    )
-
-    let version: Int
-    let shortcuts: ShortcutPair
-    let exceptionRules: [ExceptionRule]
-    let general: GeneralSettings
-
-    init(
-        version: Int = currentVersion,
-        shortcuts: ShortcutPair,
-        exceptionRules: [ExceptionRule] = [],
-        general: GeneralSettings = .defaults
-    ) {
-        self.version = version
-        self.shortcuts = shortcuts
-        self.exceptionRules = exceptionRules
-        self.general = general
-    }
-
-    var isValid: Bool {
-        shortcuts.validationError == nil
-            && Set(exceptionRules.map(\.identity)).count == exceptionRules.count
-            && general.isValid
-    }
-}
-
-enum SettingsLoadWarning: Equatable, Sendable {
-    case malformed
-    case unsupportedVersion(Int)
-    case invalidShortcuts
-    case invalidExceptionRules(discardedCount: Int)
-    case invalidGeneralSettings
-
-    var message: String {
-        switch self {
-        case .malformed:
-            "Settings could not be read. Safe shortcut defaults are active; the original file was preserved."
-        case let .unsupportedVersion(version):
-            "Settings version \(version) is not supported. Safe shortcut defaults are active; the original file was preserved."
-        case .invalidShortcuts:
-            "Saved shortcuts were invalid. Safe defaults are active; the original file was preserved."
-        case let .invalidExceptionRules(discardedCount):
-            "Skipped \(discardedCount) invalid Exception rule\(discardedCount == 1 ? "" : "s"); valid rules remain active."
-        case .invalidGeneralSettings:
-            "Saved General settings were invalid. Safe defaults are active; the original file was preserved."
-        }
-    }
-}
-
-struct SettingsLoadResult: Equatable, Sendable {
-    let snapshot: SettingsSnapshot
-    let warning: SettingsLoadWarning?
-}
-
-enum SettingsPersistenceEvent: Equatable, Sendable {
-    case saved(SettingsSnapshot)
-    case failed(SettingsSnapshot)
-}
-
-protocol PersistenceAdapter: Sendable {
-    func loadSettings() -> SettingsLoadResult
-    func saveSettings(_ snapshot: SettingsSnapshot) throws
-}
-
 struct FileSettingsPersistenceAdapter: PersistenceAdapter {
     private struct VersionEnvelope: Decodable {
         let version: Int
@@ -127,10 +11,6 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
 
     private struct LossyExceptionRule: Decodable {
         let value: ExceptionRule?
-
-        init(value: ExceptionRule?) {
-            self.value = value
-        }
 
         init(from decoder: any Decoder) throws {
             value = try? ExceptionRule(from: decoder)
@@ -152,6 +32,23 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
 
     var diagnosticSettingsURL: URL {
         settingsURL.appendingPathExtension("invalid")
+    }
+
+    var diagnosticSettingsURLs: [URL] {
+        let directory = settingsURL.deletingLastPathComponent()
+        let baseName = diagnosticSettingsURL.lastPathComponent
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        return contents
+            .filter { url in
+                url.lastPathComponent == baseName
+                    || url.lastPathComponent.hasPrefix("\(baseName).")
+            }
+            .sorted { $0.lastPathComponent.localizedStandardCompare(
+                $1.lastPathComponent
+            ) == .orderedAscending }
     }
 
     init(settingsURL: URL = Self.productionSettingsURL) {
@@ -256,12 +153,17 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
     }
 
     private func preserveSettingsForDiagnosis() {
-        guard !FileManager.default.fileExists(atPath: diagnosticSettingsURL.path) else {
-            return
-        }
+        guard let invalidData = try? Data(contentsOf: settingsURL),
+              !diagnosticSettingsURLs.contains(where: {
+                  (try? Data(contentsOf: $0)) == invalidData
+              }) else { return }
+        let existing = diagnosticSettingsURLs
+        let destination = existing.isEmpty
+            ? diagnosticSettingsURL
+            : diagnosticSettingsURL.appendingPathExtension(String(existing.count + 1))
         try? FileManager.default.copyItem(
             at: settingsURL,
-            to: diagnosticSettingsURL
+            to: destination
         )
     }
 
