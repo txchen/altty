@@ -28,6 +28,17 @@ enum FieldUpdate<Value: Equatable & Sendable>: Equatable, Sendable {
     case stale
 }
 
+enum WindowQualification {
+    private static let transientSubroles: Set<String> = [
+        "AXMenu", "AXPopover", "AXSheet", "AXSystemFloatingWindow",
+    ]
+
+    static func isTransient(role: String?, subrole: String?) -> Bool {
+        (role.map { $0 != "AXWindow" } ?? true)
+            || subrole.map(transientSubroles.contains) == true
+    }
+}
+
 struct WindowSemanticPatch: Equatable, Sendable {
     var title: FieldUpdate<String> = .unchanged
     var role: FieldUpdate<String> = .unchanged
@@ -88,7 +99,6 @@ struct WindowInventorySnapshot: Equatable, Sendable {
 protocol InventoryAdapter: Sendable {
     func apply(_ event: InventoryEvent) async -> [WindowIdentity]
     func snapshot() async -> WindowInventorySnapshot
-    func identity(for wid: WindowID, pid: ProcessID?) async -> WindowIdentity?
 }
 
 private struct SemanticField<Value: Equatable & Sendable>: Equatable, Sendable {
@@ -140,11 +150,7 @@ private struct WindowRecord: Equatable, Sendable {
     var isSwitchable: Bool {
         guard role.value == "AXWindow", !role.isStale,
               isTransient.value == false, !isTransient.isStale else { return false }
-
-        let transientSubroles: Set<String> = [
-            "AXMenu", "AXPopover", "AXSheet", "AXSystemFloatingWindow",
-        ]
-        return subrole.value.map { !transientSubroles.contains($0) } ?? true
+        return true
     }
 }
 
@@ -155,6 +161,9 @@ actor WindowInventory: InventoryAdapter {
     private var applications: [ProcessID: ApplicationState] = [:]
     private var mostRecentFirst: [WindowIdentity] = []
     private var pendingEnrichment: Set<WindowIdentity> = []
+    private var invalidatedWhileEnriching: Set<WindowIdentity> = []
+    private var coldStartFrontToBack: [WindowIdentity: Int] = [:]
+    private var hasObservedFocus = false
 
     func apply(_ event: InventoryEvent) -> [WindowIdentity] {
         switch event {
@@ -170,32 +179,36 @@ actor WindowInventory: InventoryAdapter {
             return []
         case let .focused(identity):
             guard records[identity.wid]?.identity == identity else { return [] }
-            if let application = applications[identity.pid], !application.isFrontmost { return [] }
+            hasObservedFocus = true
             mostRecentFirst.removeAll { $0 == identity }
             mostRecentFirst.insert(identity, at: 0)
             return []
         case let .semanticsInvalidated(identity):
             guard var record = records[identity.wid], record.identity == identity else { return [] }
-            record.apply(WindowSemanticPatch(
-                title: .stale,
-                role: .stale,
-                subrole: .stale,
-                isMinimized: .stale,
-                isFullscreen: .stale,
-                isTransient: .stale
-            ))
+            record.apply(staleSemanticPatch)
             record.hasReceivedSemantics = false
             records[identity.wid] = record
-            pendingEnrichment.remove(identity)
+            guard !pendingEnrichment.contains(identity) else {
+                invalidatedWhileEnriching.insert(identity)
+                return []
+            }
             return requestEnrichment(for: [identity])
         case let .semanticsChanged(identity, patch):
             guard var record = records[identity.wid], record.identity == identity else { return [] }
             record.apply(patch)
-            records[identity.wid] = record
             pendingEnrichment.remove(identity)
+            if invalidatedWhileEnriching.remove(identity) != nil {
+                record.apply(staleSemanticPatch)
+                record.hasReceivedSemantics = false
+                records[identity.wid] = record
+                return requestEnrichment(for: [identity])
+            }
+            records[identity.wid] = record
+            reorderColdStartIfNeeded()
             return []
         case let .workspaceChanged(event):
             apply(event)
+            reorderColdStartIfNeeded()
             return []
         case .clear:
             generation &+= 1
@@ -203,6 +216,9 @@ actor WindowInventory: InventoryAdapter {
             records.removeAll()
             mostRecentFirst.removeAll()
             pendingEnrichment.removeAll()
+            invalidatedWhileEnriching.removeAll()
+            coldStartFrontToBack.removeAll()
+            hasObservedFocus = false
             return []
         }
     }
@@ -232,24 +248,22 @@ actor WindowInventory: InventoryAdapter {
         )
     }
 
-    func identity(for wid: WindowID, pid: ProcessID?) -> WindowIdentity? {
-        guard let identity = records[wid]?.identity,
-              pid == nil || identity.pid == pid else { return nil }
-        return identity
-    }
-
     private func replace(with snapshot: WindowServerSnapshot) -> [WindowIdentity] {
         generation &+= 1
         activeSpaceIDs = Array(Set(snapshot.activeSpaceIDs)).sorted()
         records.removeAll(keepingCapacity: true)
         mostRecentFirst.removeAll(keepingCapacity: true)
         pendingEnrichment.removeAll(keepingCapacity: true)
+        invalidatedWhileEnriching.removeAll(keepingCapacity: true)
+        coldStartFrontToBack.removeAll(keepingCapacity: true)
+        hasObservedFocus = false
 
         let ordered = orderedUniqueWindows(snapshot.windows)
         for window in ordered where window.wid != 0 && window.pid > 0 {
             let identity = WindowIdentity(wid: window.wid, pid: window.pid, generation: generation)
             records[window.wid] = WindowRecord(identity: identity)
             mostRecentFirst.append(identity)
+            coldStartFrontToBack[identity] = window.frontToBackOrder
         }
         return requestEnrichment(for: mostRecentFirst)
     }
@@ -295,6 +309,7 @@ actor WindowInventory: InventoryAdapter {
         }
         records[window.wid] = WindowRecord(identity: identity)
         mostRecentFirst.append(identity)
+        coldStartFrontToBack[identity] = window.frontToBackOrder
         return requestEnrichment(for: [identity])
     }
 
@@ -303,6 +318,8 @@ actor WindowInventory: InventoryAdapter {
         records.removeValue(forKey: identity.wid)
         mostRecentFirst.removeAll { $0 == identity }
         pendingEnrichment.remove(identity)
+        invalidatedWhileEnriching.remove(identity)
+        coldStartFrontToBack.removeValue(forKey: identity)
     }
 
     private func requestEnrichment(for identities: [WindowIdentity]) -> [WindowIdentity] {
@@ -311,6 +328,17 @@ actor WindowInventory: InventoryAdapter {
             pendingEnrichment.insert(identity)
             return true
         }
+    }
+
+    private var staleSemanticPatch: WindowSemanticPatch {
+        WindowSemanticPatch(
+            title: .stale,
+            role: .stale,
+            subrole: .stale,
+            isMinimized: .stale,
+            isFullscreen: .stale,
+            isTransient: .stale
+        )
     }
 
     private func orderedUniqueWindows(_ windows: [WindowServerWindow]) -> [WindowServerWindow] {
@@ -323,6 +351,25 @@ actor WindowInventory: InventoryAdapter {
                 return $0.wid < $1.wid
             }
             .filter { seen.insert($0.wid).inserted }
+    }
+
+    private func reorderColdStartIfNeeded() {
+        guard !hasObservedFocus else { return }
+        mostRecentFirst.sort { left, right in
+            let leftApplication = applications[left.pid] ?? ApplicationState()
+            let rightApplication = applications[right.pid] ?? ApplicationState()
+            let leftIsDeferred = records[left.wid]?.isMinimized.value == true
+                || leftApplication.isHidden
+            let rightIsDeferred = records[right.wid]?.isMinimized.value == true
+                || rightApplication.isHidden
+            if leftIsDeferred != rightIsDeferred { return !leftIsDeferred }
+            if leftIsDeferred {
+                return left.wid < right.wid
+            }
+            let leftOrder = coldStartFrontToBack[left] ?? .max
+            let rightOrder = coldStartFrontToBack[right] ?? .max
+            return leftOrder == rightOrder ? left.wid < right.wid : leftOrder < rightOrder
+        }
     }
 
     private func apply(_ event: WorkspaceApplicationEvent) {

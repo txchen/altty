@@ -138,10 +138,6 @@ final class SwitcherEngine {
         await inventory.snapshot()
     }
 
-    func inventoryIdentity(for wid: WindowID, pid: ProcessID? = nil) async -> WindowIdentity? {
-        await inventory.identity(for: wid, pid: pid)
-    }
-
     func send(_ command: SwitcherCommand) -> [SwitcherEffect] {
         switch command {
         case .launch:

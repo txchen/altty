@@ -3,11 +3,25 @@ import CoreFoundation
 import Darwin
 import Foundation
 
+enum ManagedDisplaySpaceTopology {
+    static func currentSpaceIDs(from displays: [[String: Any]]) -> [UInt64] {
+        let ids = displays.compactMap { display -> UInt64? in
+            guard let currentSpace = display["Current Space"] as? [String: Any] else { return nil }
+            if let id = currentSpace["id64"] as? UInt64 { return id }
+            if let id = currentSpace["ManagedSpaceID"] as? UInt64 { return id }
+            if let id = currentSpace["id64"] as? NSNumber { return id.uint64Value }
+            if let id = currentSpace["ManagedSpaceID"] as? NSNumber { return id.uint64Value }
+            return nil
+        }
+        return Array(Set(ids)).sorted()
+    }
+}
+
 enum WindowServerInventoryEvent: Equatable, Sendable {
     case created(WindowID)
     case destroyed(WindowID)
-    case focused(WindowID)
-    case semanticsInvalidated(WindowID)
+    case focused(wid: WindowID, pid: ProcessID)
+    case semanticsInvalidated(wid: WindowID, pid: ProcessID)
     case activeSpaceChanged
 }
 
@@ -35,7 +49,7 @@ final class SystemWindowServerAdapter: WindowServerAdapter {
         let snapshot = await Task.detached(priority: .userInitiated) {
             SkyLightQuery().activeSpaceSnapshot()
         }.value
-        if let snapshot { eventTap?.subscribe(to: snapshot.windows.map(\.wid)) }
+        if let snapshot { eventTap?.subscribe(to: snapshot.windows) }
         return snapshot
     }
 
@@ -66,7 +80,6 @@ final class SystemWindowServerAdapter: WindowServerAdapter {
             eventTap = SkyLightEventTap { [weak self] event in
                 Task { @MainActor in
                     guard let self, let handler = self.inventoryEventHandler else { return }
-                    if case let .created(wid) = event { self.eventTap?.subscribe(to: [wid]) }
                     handler(event)
                 }
             }
@@ -74,7 +87,7 @@ final class SystemWindowServerAdapter: WindowServerAdapter {
         eventTap?.isEnabled = true
         Task { [weak self] in
             guard let self, let snapshot = await self.activeSpaceSnapshot() else { return }
-            self.eventTap?.subscribe(to: snapshot.windows.map(\.wid))
+            self.eventTap?.subscribe(to: snapshot.windows)
         }
     }
 
@@ -105,9 +118,22 @@ private let skyLightNotifyProc: SkyLightNotifyProc = { event, data, length, cont
     )
 }
 
+private enum SkyLightEventCode: UInt32, CaseIterable {
+    case windowDestroyed = 804
+    case windowMoved = 806
+    case windowResized = 807
+    case windowFocused = 808
+    case windowCreated = 811
+    case windowOrderedIn = 815
+    case windowOrderedOut = 816
+    case spaceCurrentChanged = 1329
+    case activeSpaceChanged = 1401
+}
+
 private final class SkyLightEventContext: @unchecked Sendable {
     private let lock = NSLock()
     private var enabled = true
+    private var processesByWindowID: [WindowID: ProcessID] = [:]
     private let onEvent: @Sendable (WindowServerInventoryEvent) -> Void
 
     init(onEvent: @escaping @Sendable (WindowServerInventoryEvent) -> Void) {
@@ -118,17 +144,31 @@ private final class SkyLightEventContext: @unchecked Sendable {
         lock.withLock { self.enabled = enabled }
     }
 
+    func setKnownWindows(_ windows: [WindowServerWindow]) {
+        lock.withLock {
+            processesByWindowID = Dictionary(
+                windows.map { ($0.wid, $0.pid) },
+                uniquingKeysWith: { first, _ in first }
+            )
+        }
+    }
+
     func publish(rawEvent: UInt32, wid: WindowID) {
-        let isEnabled = lock.withLock { enabled }
-        guard isEnabled else { return }
+        let state = lock.withLock { (enabled, processesByWindowID[wid]) }
+        guard state.0, let code = SkyLightEventCode(rawValue: rawEvent) else { return }
         let event: WindowServerInventoryEvent?
-        switch rawEvent {
-        case 811: event = wid == 0 ? nil : .created(wid)
-        case 804: event = wid == 0 ? nil : .destroyed(wid)
-        case 808: event = wid == 0 ? nil : .focused(wid)
-        case 806, 807, 815, 816: event = wid == 0 ? nil : .semanticsInvalidated(wid)
-        case 1329, 1401: event = .activeSpaceChanged
-        default: event = nil
+        switch code {
+        case .windowCreated:
+            event = wid == 0 ? nil : .created(wid)
+        case .windowDestroyed:
+            event = wid == 0 ? nil : .destroyed(wid)
+        case .windowFocused:
+            event = state.1.map { .focused(wid: wid, pid: $0) }
+        case .windowMoved, .windowResized, .windowOrderedIn, .windowOrderedOut:
+            event = state.1.map { .semanticsInvalidated(wid: wid, pid: $0) }
+        case .spaceCurrentChanged, .activeSpaceChanged:
+            lock.withLock { processesByWindowID.removeAll() }
+            event = .activeSpaceChanged
         }
         if let event { onEvent(event) }
     }
@@ -170,17 +210,17 @@ private final class SkyLightEventTap: @unchecked Sendable {
         requestNotifications = request
         context = .passRetained(SkyLightEventContext(onEvent: onEvent))
 
-        let eventIDs: [UInt32] = [804, 806, 807, 808, 811, 815, 816, 1329, 1401]
-        for eventID in eventIDs {
-            guard register(connection, skyLightNotifyProc, eventID, context.toOpaque()) == 0 else {
+        for eventCode in SkyLightEventCode.allCases {
+            guard register(connection, skyLightNotifyProc, eventCode.rawValue, context.toOpaque()) == 0 else {
                 context.takeUnretainedValue().setEnabled(false)
                 return nil
             }
         }
     }
 
-    func subscribe(to windowIDs: [WindowID]) {
-        var unique = Array(Set(windowIDs)).filter { $0 != 0 }
+    func subscribe(to windows: [WindowServerWindow]) {
+        context.takeUnretainedValue().setKnownWindows(windows)
+        var unique = Array(Set(windows.map(\.wid))).filter { $0 != 0 }
         guard !unique.isEmpty else { return }
         _ = requestNotifications(connection, &unique, Int32(unique.count))
     }
@@ -262,7 +302,8 @@ private struct SkyLightQuery: Sendable {
 
         let connection = mainConnection()
         guard let displays = copyManagedDisplaySpaces(connection)?.takeRetainedValue() else { return nil }
-        let activeSpaceIDs = currentSpaceIDs(from: displays)
+        guard let managedDisplays = displays as? [[String: Any]] else { return nil }
+        let activeSpaceIDs = ManagedDisplaySpaceTopology.currentSpaceIDs(from: managedDisplays)
         guard !activeSpaceIDs.isEmpty else { return nil }
 
         var setTags = 0
@@ -303,17 +344,6 @@ private struct SkyLightQuery: Sendable {
             return WindowServerWindow(wid: wid, pid: pid, frontToBackOrder: order)
         }
         return WindowServerSnapshot(activeSpaceIDs: activeSpaceIDs, windows: windows)
-    }
-
-    private func currentSpaceIDs(from displays: CFArray) -> [UInt64] {
-        let ids = (displays as NSArray).compactMap { display -> UInt64? in
-            guard let display = display as? NSDictionary,
-                  let currentSpace = display["Current Space"] as? NSDictionary else { return nil }
-            if let id = currentSpace["id64"] as? NSNumber { return id.uint64Value }
-            if let id = currentSpace["ManagedSpaceID"] as? NSNumber { return id.uint64Value }
-            return nil
-        }
-        return Array(Set(ids)).sorted()
     }
 
     private func withLibrary<T>(_ body: (UnsafeMutableRawPointer) -> T) -> T? {

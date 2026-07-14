@@ -295,11 +295,7 @@ private enum AXWindowReader {
         let subrole: String? = attribute(window, kAXSubroleAttribute as CFString)
         let minimized: Bool? = attribute(window, kAXMinimizedAttribute as CFString)
         let fullscreen: Bool? = attribute(window, "AXFullScreen" as CFString)
-        let transientSubroles: Set<String> = [
-            "AXMenu", "AXPopover", "AXSheet", "AXSystemFloatingWindow",
-        ]
-        let transient = (role.map { $0 != "AXWindow" } ?? true)
-            || subrole.map(transientSubroles.contains) == true
+        let transient = WindowQualification.isTransient(role: role, subrole: subrole)
 
         return WindowSemanticPatch(
             title: update(title),

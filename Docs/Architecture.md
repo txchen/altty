@@ -33,10 +33,10 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 ## Active Space Inventory
 
 - `CGSCopyManagedDisplaySpaces` contributes only each display's `Current Space`, including a currently presented fullscreen Space. `CGSCopyWindowsWithOptionsAndTags` supplies the authoritative front-to-back WIDs for those Spaces, including invisible/minimized candidates.
-- The SkyLight notification stream supplies create, destroy, focus, visibility/geometry and Space-change triggers. Bursts coalesce into one read-only reconciliation; there is no inventory polling timer.
-- AX title, role, subrole, minimized/fullscreen and transient facts are requested lazily for new or invalidated identities on detached work with a bounded AX messaging timeout. Unknown or stale qualification facts fail closed.
+- The SkyLight notification stream supplies create, destroy, focus, visibility/geometry and Space-change triggers. Snapshot bursts coalesce into one read-only reconciliation, stale query results are sequence-rejected, and there is no inventory polling timer.
+- AX title, role, subrole, minimized/fullscreen and transient facts are requested lazily for new or invalidated identities on detached work with a bounded AX messaging timeout. Per-window semantic bursts debounce and permit only one outstanding enrichment, with one follow-up when facts changed during that read. Unknown or stale qualification facts fail closed.
 - Workspace launch, termination, activation and hidden/unhidden notifications update only application-owned fields. Hidden-app and minimized real windows remain eligible.
-- Active Space replacement increments the inventory generation and discards the prior records. Within a generation, events must match WID and PID, and a newly created/reused WID starts without prior metadata or MRU.
+- Active Space replacement increments the inventory generation and discards the prior records. Within a generation, events must match WID and PID, and a newly created/reused WID starts without prior metadata or MRU. Cold start keeps visible candidates in front-to-back order and defers minimized/hidden candidates with deterministic WID ordering.
 
 ## Current Constraints
 

@@ -166,6 +166,35 @@ struct WindowServerSmokeTests {
 
         #expect(snapshot != nil)
         #expect(Set(snapshot?.windows.filter { $0.pid == pid }.map(\.wid) ?? []) == expectedWIDs)
+        if let inactiveText = getenv("ALTTY_INVENTORY_INACTIVE_FIXTURE_WIDS")
+            .map({ String(cString: $0) }) {
+            let inactiveWIDs = Set(inactiveText.split(separator: ",").compactMap { WindowID($0) })
+            let observedWIDs = Set(snapshot?.windows.map(\.wid) ?? [])
+            #expect(observedWIDs.isDisjoint(with: inactiveWIDs))
+        }
+    }
+}
+
+struct WindowServerTopologyTests {
+    @Test func currentSpacesExcludeInactiveDesktopSpacesAndIncludePresentedFullscreenSpace() {
+        let displays: [[String: Any]] = [
+            [
+                "Current Space": ["id64": UInt64(2), "type": 0],
+                "Spaces": [
+                    ["id64": UInt64(2)],
+                    ["id64": UInt64(9)],
+                ],
+            ],
+            [
+                "Current Space": ["ManagedSpaceID": UInt64(7), "type": 4],
+                "Spaces": [
+                    ["id64": UInt64(6)],
+                    ["id64": UInt64(7)],
+                ],
+            ],
+        ]
+
+        #expect(ManagedDisplaySpaceTopology.currentSpaceIDs(from: displays) == [2, 7])
     }
 }
 
@@ -222,9 +251,9 @@ struct WindowInventoryEngineTests {
 
         let snapshot = await engine.inventorySnapshot()
         #expect(snapshot.activeSpaceIDs == [42])
-        #expect(snapshot.windows.map(\.wid) == [30, 10])
-        #expect(snapshot.windows[0].isMinimized)
-        #expect(snapshot.windows[1].applicationIsHidden)
+        #expect(snapshot.windows.map(\.wid) == [10, 30])
+        #expect(snapshot.windows[0].applicationIsHidden)
+        #expect(snapshot.windows[1].isMinimized)
     }
 
     @Test func createFocusAndDestroyUpdateMRUWithoutDuplicateEnrichment() async {
@@ -271,6 +300,7 @@ struct WindowInventoryEngineTests {
             .enrichWindows([replacement]),
         ])
         _ = await engine.receiveInventory(.semanticsChanged(old, semantics(title: "Stale old event")))
+        _ = await engine.receiveInventory(.focused(old))
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [8])
 
         _ = await engine.receiveInventory(.semanticsChanged(replacement, semantics(title: "New")))
@@ -364,8 +394,6 @@ struct WindowInventoryEngineTests {
             ),
         ])))
 
-        _ = await engine.receiveInventory(.focused(second))
-        #expect(await engine.inventorySnapshot().windows.map(\.wid) == [1, 2])
         _ = await engine.receiveInventory(.workspaceChanged(.activated(pid: 20)))
         _ = await engine.receiveInventory(.workspaceChanged(.hidden(pid: 20, isHidden: true)))
         _ = await engine.receiveInventory(.focused(second))
@@ -376,5 +404,30 @@ struct WindowInventoryEngineTests {
 
         _ = await engine.receiveInventory(.workspaceChanged(.terminated(pid: 20)))
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [1])
+    }
+
+    @Test func semanticBurstsRequestAtMostOneOutstandingAXEnrichment() async {
+        let engine = SwitcherEngine(inventory: WindowInventory())
+        _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
+            activeSpaceIDs: [1],
+            windows: [WindowServerWindow(wid: 1, pid: 10, frontToBackOrder: 0)]
+        )))
+        let identity = WindowIdentity(wid: 1, pid: 10, generation: 1)
+        _ = await engine.receiveInventory(.semanticsChanged(identity, semantics(title: "Initial")))
+
+        #expect(await engine.receiveInventory(.semanticsInvalidated(identity)) == [
+            .enrichWindows([identity]),
+        ])
+        #expect(await engine.receiveInventory(.semanticsInvalidated(identity)) == [])
+        #expect(await engine.inventorySnapshot().windows.isEmpty)
+
+        #expect(await engine.receiveInventory(.semanticsChanged(
+            identity,
+            semantics(title: "Superseded")
+        )) == [.enrichWindows([identity])])
+        #expect(await engine.inventorySnapshot().windows.isEmpty)
+
+        _ = await engine.receiveInventory(.semanticsChanged(identity, semantics(title: "Fresh")))
+        #expect(await engine.inventorySnapshot().windows.map(\.title) == ["Fresh"])
     }
 }

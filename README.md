@@ -33,8 +33,12 @@ record the WIDs it expects on the currently presented Space, then run:
 ALTTY_RUN_INVENTORY_SMOKE=1 \
 ALTTY_INVENTORY_FIXTURE_PID=<pid> \
 ALTTY_INVENTORY_FIXTURE_WIDS=<wid,wid> \
+ALTTY_INVENTORY_INACTIVE_FIXTURE_WIDS=<wid,wid> \
 scripts/test.sh --filter realReadOnlyActiveSpaceInventoryMatchesControlledFixture
 ```
+
+The inactive-WID variable is optional, but supplying it verifies that windows
+the fixture placed on a non-presented Space are absent from the snapshot.
 
 ## Current foundation
 

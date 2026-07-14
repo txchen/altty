@@ -6,6 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isMonitoringInventory = false
     private var pendingInventoryRefresh: InventoryRefreshMode?
     private var inventoryRefreshTask: Task<Void, Never>?
+    private var inventoryRefreshSequence: UInt64 = 0
+    private var inventoryGeneration: InventoryGeneration = 0
+    private var semanticInvalidationTasks: [WindowIdentity: Task<Void, Never>] = [:]
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -78,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { [weak self] in
                     guard let self else { return }
                     self.run(await self.environment.engine.receiveInventory(.clear))
+                    self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
                 }
             }
         }
@@ -110,7 +114,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isMonitoringInventory = false
         inventoryRefreshTask?.cancel()
         inventoryRefreshTask = nil
+        inventoryRefreshSequence &+= 1
         pendingInventoryRefresh = nil
+        semanticInvalidationTasks.values.forEach { $0.cancel() }
+        semanticInvalidationTasks.removeAll()
         environment.windowServer.stopMonitoringInventory()
         environment.accessibility.stopMonitoringInventory()
         environment.workspace.stopMonitoring()
@@ -120,14 +127,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch event {
         case .created, .destroyed:
             scheduleInventoryRefresh(.reconcile)
-        case let .focused(wid):
+        case let .focused(wid, pid):
+            let identity = WindowIdentity(wid: wid, pid: pid, generation: inventoryGeneration)
             Task { [weak self] in
-                guard let self,
-                      let identity = await self.environment.engine.inventoryIdentity(for: wid) else { return }
+                guard let self else { return }
                 self.run(await self.environment.engine.receiveInventory(.focused(identity)))
             }
-        case let .semanticsInvalidated(wid):
-            invalidateSemantics(wid: wid, pid: nil)
+        case let .semanticsInvalidated(wid, pid):
+            scheduleSemanticInvalidation(WindowIdentity(
+                wid: wid,
+                pid: pid,
+                generation: inventoryGeneration
+            ))
         case .activeSpaceChanged:
             scheduleInventoryRefresh(.replace)
         }
@@ -138,9 +149,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .created, .destroyed:
             scheduleInventoryRefresh(.reconcile)
         case let .focused(pid, wid):
-            if let wid { invalidateSemantics(wid: wid, pid: pid) }
+            if let wid {
+                scheduleSemanticInvalidation(WindowIdentity(
+                    wid: wid,
+                    pid: pid,
+                    generation: inventoryGeneration
+                ))
+            }
         case let .semanticsChanged(pid, wid):
-            if let wid { invalidateSemantics(wid: wid, pid: pid) }
+            if let wid {
+                scheduleSemanticInvalidation(WindowIdentity(
+                    wid: wid,
+                    pid: pid,
+                    generation: inventoryGeneration
+                ))
+            }
         }
     }
 
@@ -160,12 +183,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func invalidateSemantics(wid: WindowID, pid: ProcessID?) {
-        Task { [weak self] in
-            guard let self,
-                  let identity = await self.environment.engine.inventoryIdentity(for: wid, pid: pid) else {
+    private func scheduleSemanticInvalidation(_ identity: WindowIdentity) {
+        semanticInvalidationTasks[identity]?.cancel()
+        semanticInvalidationTasks[identity] = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(75))
+            } catch {
                 return
             }
+            guard let self, self.isMonitoringInventory else { return }
+            self.semanticInvalidationTasks[identity] = nil
             self.run(await self.environment.engine.receiveInventory(.semanticsInvalidated(identity)))
         }
     }
@@ -187,6 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if mode == .replace || pendingInventoryRefresh == nil {
             pendingInventoryRefresh = mode
         }
+        inventoryRefreshSequence &+= 1
+        let sequence = inventoryRefreshSequence
         inventoryRefreshTask?.cancel()
         inventoryRefreshTask = Task { [weak self] in
             do {
@@ -198,10 +227,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   let mode = self.pendingInventoryRefresh else { return }
             self.pendingInventoryRefresh = nil
             guard let snapshot = await self.environment.windowServer.activeSpaceSnapshot() else { return }
+            guard !Task.isCancelled, self.isMonitoringInventory,
+                  sequence == self.inventoryRefreshSequence else { return }
             let event: InventoryEvent = mode == .replace
                 ? .replaceActiveSpace(snapshot)
                 : .reconcileActiveSpace(snapshot)
             self.run(await self.environment.engine.receiveInventory(event))
+            self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
         }
     }
 
