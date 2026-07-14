@@ -8,11 +8,11 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 cd "$ROOT_DIR"
-swift build -c release
+swift build -c release --arch arm64
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp "$ROOT_DIR/.build/release/Altty" "$MACOS_DIR/Altty"
+cp "$ROOT_DIR/.build/arm64-apple-macosx/release/Altty" "$MACOS_DIR/Altty"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 
 if command -v codesign >/dev/null 2>&1; then

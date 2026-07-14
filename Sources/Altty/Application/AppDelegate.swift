@@ -1,69 +1,53 @@
 import AppKit
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let menuBarController = MenuBarController()
-    private let hotKeyController = HotKeyController()
-    private let switcher = WindowSwitcher()
-    private let settingsWindowController = SettingsWindowController()
+    private let environment: AppEnvironment
+
+    init(environment: AppEnvironment) {
+        self.environment = environment
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        menuBarController.delegate = self
-        menuBarController.install()
-        hotKeyController.delegate = self
-        hotKeyController.start()
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(activeApplicationDidChange(_:)),
-            name: NSWorkspace.didActivateApplicationNotification,
-            object: nil
-        )
-        if !AccessibilityPermission.isTrusted {
-            showSettings()
+        environment.presentation.install { [weak self] command in self?.handle(command) }
+        handle(.launch)
+    }
+
+    private func handle(_ command: SwitcherCommand) {
+        run(environment.engine.send(command))
+        refreshPresentation()
+    }
+
+    private func receive(_ event: SwitcherEvent) {
+        run(environment.engine.receive(event))
+        refreshPresentation()
+    }
+
+    private func run(_ effects: [SwitcherEffect]) {
+        for effect in effects {
+            switch effect {
+            case .checkAccessibility:
+                receive(.accessibilityChanged(environment.accessibility.availability()))
+            case .checkWindowServer:
+                receive(.windowServerChanged(environment.windowServer.availability()))
+            case let .setShortcutsEnabled(enabled):
+                environment.input.setShortcutsEnabled(enabled)
+            case .presentSettings:
+                environment.presentation.presentSettings(state: environment.engine.presentationState)
+            case .requestAccessibility:
+                environment.accessibility.requestPermission()
+                receive(.accessibilityChanged(environment.accessibility.availability()))
+            case .openReleasesPage:
+                environment.presentation.openReleasesPage()
+            case .terminate:
+                NSApp.terminate(nil)
+            }
         }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        hotKeyController.stop()
-    }
-
-    @objc private func activeApplicationDidChange(_ notification: Notification) {
-        WindowActivationHistory.shared.recordFrontmostApplication()
-    }
-
-    private func showSwitcher() {
-        guard AccessibilityPermission.isTrusted else {
-            showSettings()
-            AccessibilityPermission.request()
-            return
-        }
-        switcher.showOrCycle()
-    }
-}
-
-extension AppDelegate: MenuBarControllerDelegate {
-    func menuBarControllerDidRequestSwitcher(_ controller: MenuBarController) {
-        showSwitcher()
-    }
-
-    func menuBarControllerDidRequestSettings(_ controller: MenuBarController) {
-        showSettings()
-    }
-
-    func menuBarControllerDidRequestQuit(_ controller: MenuBarController) {
-        NSApp.terminate(nil)
-    }
-
-    private func showSettings() {
-        settingsWindowController.show()
-    }
-}
-
-extension AppDelegate: HotKeyControllerDelegate {
-    func hotKeyControllerDidTriggerNextWindow(_ controller: HotKeyController) {
-        showSwitcher()
-    }
-
-    func hotKeyControllerDidReleaseHoldModifier(_ controller: HotKeyController) {
-        switcher.focusSelectionIfVisible()
+    private func refreshPresentation() {
+        let state = environment.engine.presentationState
+        environment.presentation.update(state: state)
     }
 }

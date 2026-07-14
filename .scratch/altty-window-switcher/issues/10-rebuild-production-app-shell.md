@@ -4,13 +4,13 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The disposable production source is removed rather than incrementally adapted, while still-relevant product metadata and packaging inputs are reviewed and retained deliberately.
-- [ ] The application builds and launches natively on Apple silicon with macOS 15 as its minimum deployment target and `app.altty.macos` as the production bundle ID.
-- [ ] Altty runs as a menu-bar application with no Dock icon and provides readiness, Settings and Quit actions.
-- [ ] Settings opens a native sidebar window with General, Shortcuts, Exceptions and About destinations, even if later-ticket controls are initially unavailable.
-- [ ] Application startup assembles Input, WindowServer, Accessibility, Inventory, Switching, Exceptions, Persistence, Presentation and Diagnostics boundaries without private types crossing into core state.
-- [ ] `SwitcherEngine` accepts commands/events/state and exposes immutable presentation state plus requested effects without depending on concrete AppKit controllers or system adapters.
-- [ ] Automated tests exercise launch/readiness state and menu/Settings commands through the public engine seam.
-- [ ] The repository has a runnable test target and a documented local build/test command that passes from a clean checkout.
+- [x] The disposable production source is removed rather than incrementally adapted, while still-relevant product metadata and packaging inputs are reviewed and retained deliberately.
+- [x] The application builds and launches natively on Apple silicon with macOS 15 as its minimum deployment target and `app.altty.macos` as the production bundle ID.
+- [x] Altty runs as a menu-bar application with no Dock icon and provides readiness, Settings and Quit actions.
+- [x] Settings opens a native sidebar window with General, Shortcuts, Exceptions and About destinations, even if later-ticket controls are initially unavailable.
+- [x] Application startup assembles Input, WindowServer, Accessibility, Inventory, Switching, Exceptions, Persistence, Presentation and Diagnostics boundaries without private types crossing into core state.
+- [x] `SwitcherEngine` accepts commands/events/state and exposes immutable presentation state plus requested effects without depending on concrete AppKit controllers or system adapters.
+- [x] Automated tests exercise launch/readiness state and menu/Settings commands through the public engine seam.
+- [x] The repository has a runnable test target and a documented local build/test command that passes from a clean checkout.

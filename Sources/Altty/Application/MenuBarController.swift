@@ -1,41 +1,36 @@
 import AppKit
 
-protocol MenuBarControllerDelegate: AnyObject {
-    func menuBarControllerDidRequestSwitcher(_ controller: MenuBarController)
-    func menuBarControllerDidRequestSettings(_ controller: MenuBarController)
-    func menuBarControllerDidRequestQuit(_ controller: MenuBarController)
-}
-
+@MainActor
 final class MenuBarController: NSObject {
-    weak var delegate: MenuBarControllerDelegate?
+    private let onCommand: (SwitcherCommand) -> Void
     private var statusItem: NSStatusItem?
+    private let readinessItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
+
+    init(onCommand: @escaping (SwitcherCommand) -> Void) { self.onCommand = onCommand }
 
     func install() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = item.button {
-            button.image = NSImage(systemSymbolName: "rectangle.stack", accessibilityDescription: "Altty")
-            button.image?.isTemplate = true
-        }
+        item.button?.image = NSImage(systemSymbolName: "rectangle.stack", accessibilityDescription: "Altty")
+        item.button?.image?.isTemplate = true
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show Switcher", action: #selector(showSwitcher), keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
-        menu.addItem(NSMenuItem.separator())
+        readinessItem.isEnabled = false
+        menu.addItem(readinessItem)
+        menu.addItem(NSMenuItem(title: "Check Readiness", action: #selector(recheck), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Grant Accessibility Permission…", action: #selector(requestAccessibility), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: ""))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Altty", action: #selector(quit), keyEquivalent: "q"))
-        menu.items.forEach { $0.target = self }
+        menu.items.forEach { if $0.action != nil { $0.target = self } }
         item.menu = menu
         statusItem = item
     }
 
-    @objc private func showSwitcher() {
-        delegate?.menuBarControllerDidRequestSwitcher(self)
-    }
-
-    @objc private func showSettings() {
-        delegate?.menuBarControllerDidRequestSettings(self)
-    }
-
-    @objc private func quit() {
-        delegate?.menuBarControllerDidRequestQuit(self)
-    }
+    func update(state: SwitcherPresentationState) { readinessItem.title = state.readinessTitle }
+    @objc private func recheck() { onCommand(.recheckReadiness) }
+    @objc private func openSettings() { onCommand(.openSettings) }
+    @objc private func requestAccessibility() { onCommand(.requestAccessibility) }
+    @objc private func checkForUpdates() { onCommand(.checkForUpdates) }
+    @objc private func quit() { onCommand(.quit) }
 }
