@@ -67,8 +67,10 @@ that the third WID is promoted in the shared MRU, and restores the fixture's
 origin window before exiting. Both focus smoke tests restore their origin WID.
 
 Shortcut registration smoke testing changes no macOS shortcut preferences, but
-it does temporarily claim the configured chords. Run it only when Option-Tab
-and Option-Grave are free on the current keyboard layout:
+it does temporarily claim the configured chords. It registers and releases the
+pair, then proves a second real Carbon registrar can claim the same chords.
+Run it on each supported keyboard layout when Option-Tab and Option-Grave are
+free:
 
 ```sh
 ALTTY_RUN_SHORTCUT_SMOKE=1 \

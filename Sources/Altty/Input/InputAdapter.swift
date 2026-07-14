@@ -71,6 +71,7 @@ enum ShortcutEvent: Equatable, Sendable {
 
 enum ShortcutRegistrationResult: Equatable, Sendable {
     case applied
+    case staged
     case failure(ShortcutConfigurationError)
 }
 
@@ -125,7 +126,8 @@ final class SystemInputAdapter: InputAdapter {
 
     @discardableResult
     func setShortcutsEnabled(_ enabled: Bool) -> ShortcutRegistrationResult {
-        guard enabled != shortcutsEnabled else { return .applied }
+        guard enabled != shortcutsEnabled
+                || (!enabled && !activeRegistrations.isEmpty) else { return .applied }
         if enabled {
             guard !usesSystemMonitors || installHotKeyHandlerIfNeeded() else {
                 return .failure(.inputMonitoringUnavailable)
@@ -159,7 +161,7 @@ final class SystemInputAdapter: InputAdapter {
         guard pair != configuredShortcuts else { return .applied }
         guard shortcutsEnabled else {
             configuredShortcuts = pair
-            return .applied
+            return .staged
         }
         return registerPairAtomically(pair, replacing: configuredShortcuts)
     }
@@ -196,8 +198,14 @@ final class SystemInputAdapter: InputAdapter {
                     modifiers: modifiers
                 )
                 guard registrar.register(hotKey) else {
-                    let rolledBack = unregister(proposedRegistrations)
-                    guard rolledBack else { return .failure(.inputMonitoringUnavailable) }
+                    let proposedStillRegistered = proposedRegistrations.filter {
+                        !registrar.unregister(id: $0.hotKey.id)
+                    }
+                    guard proposedStillRegistered.isEmpty else {
+                        activeRegistrations.append(contentsOf: proposedStillRegistered)
+                        shortcutsEnabled = false
+                        return .failure(.inputMonitoringUnavailable)
+                    }
                     return .failure(.unavailableShortcut(mode))
                 }
                 proposedRegistrations.append(ActiveRegistration(
@@ -215,10 +223,22 @@ final class SystemInputAdapter: InputAdapter {
         var retired: [ActiveRegistration] = []
         for registration in retiredRegistrations {
             guard registrar.unregister(id: registration.hotKey.id) else {
-                _ = unregister(proposedRegistrations)
-                for removedRegistration in retired {
-                    _ = registrar.register(removedRegistration.hotKey)
+                let proposedStillRegistered = proposedRegistrations.filter {
+                    !registrar.unregister(id: $0.hotKey.id)
                 }
+                var failedRestorations: Set<UInt32> = []
+                for removedRegistration in retired {
+                    if !registrar.register(removedRegistration.hotKey) {
+                        failedRestorations.insert(removedRegistration.hotKey.id)
+                    }
+                }
+                let removedIDs = Set(retired.map(\.hotKey.id))
+                activeRegistrations.removeAll {
+                    removedIDs.contains($0.hotKey.id)
+                        && failedRestorations.contains($0.hotKey.id)
+                }
+                activeRegistrations.append(contentsOf: proposedStillRegistered)
+                shortcutsEnabled = false
                 return .failure(.inputMonitoringUnavailable)
             }
             retired.append(registration)
@@ -229,14 +249,6 @@ final class SystemInputAdapter: InputAdapter {
         activeRegistrations.append(contentsOf: proposedRegistrations)
         configuredShortcuts = pair
         return .applied
-    }
-
-    private func unregister(_ registrations: [ActiveRegistration]) -> Bool {
-        var succeeded = true
-        for registration in registrations {
-            if !registrar.unregister(id: registration.hotKey.id) { succeeded = false }
-        }
-        return succeeded
     }
 
     private func installHotKeyHandlerIfNeeded() -> Bool {

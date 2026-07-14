@@ -127,6 +127,7 @@ enum SwitcherEffect: Equatable, Sendable {
     case showSwitcherPanel(SwitcherPanelState)
     case updateSwitcherPanel(SwitcherPanelState)
     case replaceShortcuts(ShortcutPair)
+    case rollbackShortcuts(ShortcutPair)
     case persistSettings(SettingsSnapshot)
 }
 
@@ -558,8 +559,7 @@ final class SwitcherEngine {
     func receiveShortcutRegistration(_ event: ShortcutRegistrationEvent) -> [SwitcherEffect] {
         switch event {
         case let .applied(pair):
-            presentationState.shortcutSettings.current = pair
-            presentationState.shortcutSettings.pending = nil
+            presentationState.shortcutSettings.pending = pair
             presentationState.shortcutSettings.error = nil
             presentationState.shortcutSettings.recoveryWarning = nil
             return [.persistSettings(SettingsSnapshot(shortcuts: pair))]
@@ -569,24 +569,37 @@ final class SwitcherEngine {
             }
             presentationState.shortcutSettings.error = error
             return []
+        case let .recoveredWithDefaults(error):
+            presentationState.shortcutSettings.pending = .defaults
+            presentationState.shortcutSettings.error = nil
+            presentationState.shortcutSettings.recoveryWarning = "Saved shortcuts were unavailable, so Altty restored the defaults. \(error.message)"
+            return [.persistSettings(.defaults)]
         }
     }
 
-    func receiveShortcutPersistenceFailure() {
-        presentationState.shortcutSettings.error = .couldNotSaveSettings
+    func receiveShortcutPersistence(_ event: ShortcutPersistenceEvent) -> [SwitcherEffect] {
+        switch event {
+        case let .saved(pair):
+            guard presentationState.shortcutSettings.pending == pair else { return [] }
+            presentationState.shortcutSettings.current = pair
+            presentationState.shortcutSettings.pending = nil
+            presentationState.shortcutSettings.error = nil
+            return []
+        case let .failed(pair):
+            guard presentationState.shortcutSettings.pending == pair else { return [] }
+            presentationState.shortcutSettings.pending = nil
+            presentationState.shortcutSettings.error = .couldNotSaveSettings
+            return [.rollbackShortcuts(presentationState.shortcutSettings.current)]
+        }
     }
 
     private func updateShortcut(
         mode: SwitcherMode,
         binding: ShortcutBinding
     ) -> [SwitcherEffect] {
-        let current = presentationState.shortcutSettings.current
-        let pair = switch mode {
-        case .allWindows:
-            ShortcutPair(allWindows: binding, currentApp: current.currentApp)
-        case .currentApp:
-            ShortcutPair(allWindows: current.allWindows, currentApp: binding)
-        }
+        let current = presentationState.shortcutSettings.pending
+            ?? presentationState.shortcutSettings.current
+        let pair = current.replacing(mode, with: binding)
         if let error = pair.validationError {
             presentationState.shortcutSettings.pending = nil
             presentationState.shortcutSettings.error = error

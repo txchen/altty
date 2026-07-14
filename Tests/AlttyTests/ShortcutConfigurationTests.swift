@@ -105,6 +105,49 @@ struct ShortcutConfigurationTests {
         #expect(events.isEmpty)
     }
 
+    @Test func disabledEditsRemainStagedUntilThePairCanBeRegistered() {
+        let registrar = RecordingHotKeyRegistrar()
+        let input = SystemInputAdapter(registrar: registrar, usesSystemMonitors: false)
+        let proposed = ShortcutPair(
+            allWindows: .init(
+                key: ShortcutKey(keyCode: UInt32(kVK_ANSI_A), displayName: "A"),
+                modifiers: [.control]
+            ),
+            currentApp: ShortcutPair.defaults.currentApp
+        )
+
+        #expect(input.replaceShortcuts(proposed) == .staged)
+        #expect(registrar.registrations.isEmpty)
+        #expect(input.setShortcutsEnabled(true) == .applied)
+        #expect(registrar.registrations.count == 4)
+    }
+
+    @Test func failedUnregistrationRemainsTrackedAndCanBeRetriedFailClosed() {
+        let registrar = RecordingHotKeyRegistrar()
+        let input = SystemInputAdapter(registrar: registrar, usesSystemMonitors: false)
+        input.install { _ in }
+        #expect(input.setShortcutsEnabled(true) == .applied)
+        let previousRegistrations = registrar.registrations
+        let firstOldID = previousRegistrations.keys.sorted().first!
+        registrar.unregisterFailuresRemaining[firstOldID] = 1
+        let proposed = ShortcutPair(
+            allWindows: .init(
+                key: ShortcutKey(keyCode: UInt32(kVK_ANSI_A), displayName: "A"),
+                modifiers: [.control]
+            ),
+            currentApp: .init(
+                key: ShortcutKey(keyCode: UInt32(kVK_ANSI_B), displayName: "B"),
+                modifiers: [.command]
+            )
+        )
+
+        #expect(input.replaceShortcuts(proposed) == .failure(.inputMonitoringUnavailable))
+        #expect(!input.shortcutsEnabled)
+        #expect(registrar.registrations == previousRegistrations)
+        #expect(input.setShortcutsEnabled(false) == .applied)
+        #expect(registrar.registrations.isEmpty)
+    }
+
     @Test func sessionConfirmsOnlyAfterEveryConfiguredModifierIsReleased() {
         let registrar = RecordingHotKeyRegistrar()
         let pair = ShortcutPair(
@@ -218,12 +261,17 @@ struct ShortcutConfigurationTests {
             key: ShortcutKey(keyCode: UInt32(kVK_ANSI_A), displayName: "A"),
             modifiers: [.control, .command]
         )
+        let proposedCurrentAppBinding = ShortcutBinding(
+            key: ShortcutKey(keyCode: UInt32(kVK_ANSI_B), displayName: "B"),
+            modifiers: [.option, .command]
+        )
         let proposedPair = ShortcutPair(
             allWindows: proposedBinding,
-            currentApp: ShortcutPair.defaults.currentApp
+            currentApp: proposedCurrentAppBinding
         )
 
         #expect(engine.send(.updateShortcut(.allWindows, proposedBinding)) == [])
+        #expect(engine.send(.updateShortcut(.currentApp, proposedCurrentAppBinding)) == [])
         #expect(engine.presentationState.shortcutSettings.current == .defaults)
         #expect(engine.presentationState.shortcutSettings.pending == proposedPair)
         #expect(engine.receiveSession(.cancel(.escape)) == [
@@ -233,8 +281,54 @@ struct ShortcutConfigurationTests {
         #expect(engine.receiveShortcutRegistration(.applied(proposedPair)) == [
             .persistSettings(SettingsSnapshot(shortcuts: proposedPair)),
         ])
+        #expect(engine.presentationState.shortcutSettings.current == .defaults)
+        #expect(engine.presentationState.shortcutSettings.pending == proposedPair)
+        #expect(engine.receiveShortcutPersistence(.saved(proposedPair)) == [])
         #expect(engine.presentationState.shortcutSettings.current == proposedPair)
         #expect(engine.presentationState.shortcutSettings.pending == nil)
+    }
+
+    @Test func persistenceFailureRollsRegistrationBackToThePriorPair() {
+        let engine = SwitcherEngine()
+        let proposed = ShortcutPair(
+            allWindows: .init(
+                key: ShortcutKey(keyCode: UInt32(kVK_ANSI_A), displayName: "A"),
+                modifiers: [.command]
+            ),
+            currentApp: ShortcutPair.defaults.currentApp
+        )
+
+        #expect(engine.send(.updateShortcut(.allWindows, proposed.allWindows)) == [
+            .replaceShortcuts(proposed),
+        ])
+        #expect(engine.receiveShortcutRegistration(.applied(proposed)) == [
+            .persistSettings(SettingsSnapshot(shortcuts: proposed)),
+        ])
+        #expect(engine.receiveShortcutPersistence(.failed(proposed)) == [
+            .rollbackShortcuts(.defaults),
+        ])
+        #expect(engine.presentationState.shortcutSettings.current == .defaults)
+        #expect(engine.presentationState.shortcutSettings.pending == nil)
+        #expect(engine.presentationState.shortcutSettings.error == .couldNotSaveSettings)
+    }
+
+    @Test func unavailablePersistedPairRecoversToDefaultsWithAVisibleWarning() {
+        let persisted = ShortcutPair(
+            allWindows: .init(
+                key: ShortcutKey(keyCode: UInt32(kVK_ANSI_A), displayName: "A"),
+                modifiers: [.command]
+            ),
+            currentApp: ShortcutPair.defaults.currentApp
+        )
+        let engine = SwitcherEngine(shortcuts: persisted)
+        let error = ShortcutConfigurationError.unavailableShortcut(.allWindows)
+
+        #expect(engine.receiveShortcutRegistration(.recoveredWithDefaults(error)) == [
+            .persistSettings(.defaults),
+        ])
+        #expect(engine.receiveShortcutPersistence(.saved(.defaults)) == [])
+        #expect(engine.presentationState.shortcutSettings.current == .defaults)
+        #expect(engine.presentationState.shortcutSettings.recoveryWarning != nil)
     }
 
     @Test func engineRejectsInvalidEditsAndSurfacesRegistrationConflictsInline() {
@@ -276,6 +370,7 @@ private final class RecordingHotKeyRegistrar: HotKeyRegistrar {
     var registrations: [UInt32: RegisteredHotKey] = [:]
     var unavailableKeyCode: UInt32?
     var operations: [Operation] = []
+    var unregisterFailuresRemaining: [UInt32: Int] = [:]
 
     func register(_ hotKey: RegisteredHotKey) -> Bool {
         guard hotKey.keyCode != unavailableKeyCode else { return false }
@@ -285,6 +380,10 @@ private final class RecordingHotKeyRegistrar: HotKeyRegistrar {
     }
 
     func unregister(id: UInt32) -> Bool {
+        if let failures = unregisterFailuresRemaining[id], failures > 0 {
+            unregisterFailuresRemaining[id] = failures - 1
+            return false
+        }
         registrations[id] = nil
         operations.append(.unregistered(id))
         return true

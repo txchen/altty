@@ -100,6 +100,15 @@ struct ShortcutPair: Codable, Equatable, Sendable {
         case .currentApp: currentApp
         }
     }
+
+    func replacing(_ mode: SwitcherMode, with binding: ShortcutBinding) -> ShortcutPair {
+        switch mode {
+        case .allWindows:
+            ShortcutPair(allWindows: binding, currentApp: currentApp)
+        case .currentApp:
+            ShortcutPair(allWindows: allWindows, currentApp: binding)
+        }
+    }
 }
 
 enum ShortcutConfigurationError: Error, Equatable, Sendable {
@@ -145,4 +154,10 @@ struct ShortcutSettingsState: Equatable, Sendable {
 enum ShortcutRegistrationEvent: Equatable, Sendable {
     case applied(ShortcutPair)
     case failed(ShortcutPair, ShortcutConfigurationError)
+    case recoveredWithDefaults(ShortcutConfigurationError)
+}
+
+enum ShortcutPersistenceEvent: Equatable, Sendable {
+    case saved(ShortcutPair)
+    case failed(ShortcutPair)
 }

@@ -409,6 +409,12 @@ struct InputSmokeTests {
         #expect(input.shortcutsEnabled)
         #expect(input.setShortcutsEnabled(false) == .applied)
         #expect(!input.shortcutsEnabled)
+
+        let receiver = SystemInputAdapter()
+        receiver.install { _ in }
+        #expect(receiver.setShortcutsEnabled(true) == .applied)
+        #expect(receiver.shortcutsEnabled)
+        #expect(receiver.setShortcutsEnabled(false) == .applied)
     }
 }
 

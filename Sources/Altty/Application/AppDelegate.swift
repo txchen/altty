@@ -106,13 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .checkWindowServer:
                 receive(.windowServerChanged(environment.windowServer.availability()))
             case let .setShortcutsEnabled(enabled):
-                let result = environment.input.setShortcutsEnabled(enabled)
-                if case let .failure(error) = result {
-                    run(environment.engine.receiveShortcutRegistration(.failed(
-                        environment.input.configuredShortcuts,
-                        error
-                    )))
-                }
+                setShortcutsEnabled(enabled)
             case .endActiveSession:
                 switcherPanelTask?.cancel()
                 switcherPanelTask = nil
@@ -171,18 +165,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch result {
                 case .applied:
                     run(environment.engine.receiveShortcutRegistration(.applied(pair)))
+                case .staged:
+                    break
                 case let .failure(error):
+                    run(environment.engine.receiveShortcutRegistration(.failed(pair, error)))
+                    if error == .inputMonitoringUnavailable {
+                        _ = environment.input.setShortcutsEnabled(false)
+                    }
+                }
+                refreshPresentation()
+            case let .rollbackShortcuts(pair):
+                if case let .failure(error) = environment.input.replaceShortcuts(pair) {
                     run(environment.engine.receiveShortcutRegistration(.failed(pair, error)))
                 }
                 refreshPresentation()
             case let .persistSettings(snapshot):
                 do {
                     try environment.persistence.saveSettings(snapshot)
+                    run(environment.engine.receiveShortcutPersistence(.saved(
+                        snapshot.shortcuts
+                    )))
                 } catch {
-                    environment.engine.receiveShortcutPersistenceFailure()
-                    refreshPresentation()
+                    run(environment.engine.receiveShortcutPersistence(.failed(
+                        snapshot.shortcuts
+                    )))
                 }
+                refreshPresentation()
             }
+        }
+    }
+
+    private func setShortcutsEnabled(_ enabled: Bool) {
+        let result = environment.input.setShortcutsEnabled(enabled)
+        guard enabled else {
+            if case let .failure(error) = result {
+                run(environment.engine.receiveShortcutRegistration(.failed(
+                    environment.input.configuredShortcuts,
+                    error
+                )))
+            }
+            return
+        }
+
+        switch result {
+        case .applied:
+            if environment.engine.presentationState.shortcutSettings.pending
+                == environment.input.configuredShortcuts {
+                run(environment.engine.receiveShortcutRegistration(.applied(
+                    environment.input.configuredShortcuts
+                )))
+            }
+        case .staged:
+            break
+        case let .failure(error):
+            recoverFromUnavailableShortcuts(error)
+        }
+    }
+
+    private func recoverFromUnavailableShortcuts(_ error: ShortcutConfigurationError) {
+        let unavailable = environment.input.configuredShortcuts
+        let settings = environment.engine.presentationState.shortcutSettings
+        if settings.pending == unavailable {
+            run(environment.engine.receiveShortcutRegistration(.failed(unavailable, error)))
+            _ = environment.input.replaceShortcuts(settings.current)
+            if case let .failure(restoreError) = environment.input.setShortcutsEnabled(true) {
+                run(environment.engine.receiveShortcutRegistration(.failed(
+                    settings.current,
+                    restoreError
+                )))
+            }
+            return
+        }
+
+        guard unavailable != .defaults else {
+            run(environment.engine.receiveShortcutRegistration(.failed(unavailable, error)))
+            return
+        }
+        _ = environment.input.replaceShortcuts(.defaults)
+        switch environment.input.setShortcutsEnabled(true) {
+        case .applied:
+            run(environment.engine.receiveShortcutRegistration(
+                .recoveredWithDefaults(error)
+            ))
+        case .staged:
+            break
+        case let .failure(defaultError):
+            run(environment.engine.receiveShortcutRegistration(.failed(
+                unavailable,
+                defaultError
+            )))
         }
     }
 
