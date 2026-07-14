@@ -31,6 +31,7 @@ The specification must settle user behavior, window discovery and focus semantic
 - [Choose technical architecture](issues/06-choose-technical-architecture.md) — Rebuild as one layered AppKit target with an actor-owned active-Space inventory, event-driven updates, SkyLight-only verified focus, atomic versioned settings and explicit lightweight performance budgets.
 - [Define release and update contract](issues/07-define-release-and-update-contract.md) — Publish immutable signed/notarized arm64 ZIPs with permanent bundle ID `app.altty.macos` through approval-gated GitHub Releases, update a project-owned Homebrew tap, and provide only manual browser-based update checks in v1.
 - [Define acceptance and regression coverage](issues/09-define-acceptance-and-regression-coverage.md) — Gate behavior with deterministic policy/race tests, explicit macOS focus/TCC smoke tests, measurable lightweight performance budgets, tested-only OS support and build-SHA-linked signed RC verification.
+- [Add the Current-App Switcher](issues/15-add-current-app-switcher.md) — Register Option-Grave alongside Option-Tab and run both modes through the shared session engine, with Current-App filtering the global MRU by an invocation-snapshotted frontmost PID and deterministic cross-mode interruption.
 
 ## Not yet specified
 

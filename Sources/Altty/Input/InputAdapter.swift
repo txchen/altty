@@ -5,6 +5,8 @@ import Foundation
 private let alttyHotKeySignature: OSType = 0x414C5459 // "ALTY"
 private let allWindowsHotKeyID: UInt32 = 1
 private let allWindowsReverseHotKeyID: UInt32 = 2
+private let currentAppHotKeyID: UInt32 = 3
+private let currentAppReverseHotKeyID: UInt32 = 4
 
 private let alttyCarbonHotKeyHandler: EventHandlerUPP = { _, event, userData in
     guard let event, let userData else { return OSStatus(eventNotHandledErr) }
@@ -22,21 +24,30 @@ private let alttyCarbonHotKeyHandler: EventHandlerUPP = { _, event, userData in
         return OSStatus(eventNotHandledErr)
     }
     let adapter = Unmanaged<SystemInputAdapter>.fromOpaque(userData).takeUnretainedValue()
+    let mode: SwitcherMode
     let direction: SwitchDirection
     switch identifier.id {
     case allWindowsHotKeyID:
+        mode = .allWindows
         direction = .forward
     case allWindowsReverseHotKeyID:
+        mode = .allWindows
+        direction = .backward
+    case currentAppHotKeyID:
+        mode = .currentApp
+        direction = .forward
+    case currentAppReverseHotKeyID:
+        mode = .currentApp
         direction = .backward
     default:
         return OSStatus(eventNotHandledErr)
     }
-    MainActor.assumeIsolated { adapter.hotKeyPressed(direction: direction) }
+    MainActor.assumeIsolated { adapter.hotKeyPressed(mode: mode, direction: direction) }
     return noErr
 }
 
 enum ShortcutEvent: Equatable, Sendable {
-    case allWindowsPressed(SwitchDirection)
+    case switcherPressed(SwitcherMode, SwitchDirection)
     case holdModifiersReleased
     case cancel(SwitcherCancellationReason)
 }
@@ -74,6 +85,16 @@ final class SystemInputAdapter: InputAdapter {
                   registerHotKey(
                     id: allWindowsReverseHotKeyID,
                     modifiers: UInt32(optionKey | shiftKey)
+                  ),
+                  registerHotKey(
+                    id: currentAppHotKeyID,
+                    keyCode: UInt32(kVK_ANSI_Grave),
+                    modifiers: UInt32(optionKey)
+                  ),
+                  registerHotKey(
+                    id: currentAppReverseHotKeyID,
+                    keyCode: UInt32(kVK_ANSI_Grave),
+                    modifiers: UInt32(optionKey | shiftKey)
                   ) else {
                 unregisterHotKeys()
                 return
@@ -89,10 +110,14 @@ final class SystemInputAdapter: InputAdapter {
         }
     }
 
-    private func registerHotKey(id: UInt32, modifiers: UInt32) -> Bool {
+    private func registerHotKey(
+        id: UInt32,
+        keyCode: UInt32 = UInt32(kVK_Tab),
+        modifiers: UInt32
+    ) -> Bool {
         var registeredHotKey: EventHotKeyRef?
         let status = RegisterEventHotKey(
-            UInt32(kVK_Tab),
+            keyCode,
             modifiers,
             EventHotKeyID(signature: alttyHotKeySignature, id: id),
             GetApplicationEventTarget(),
@@ -177,10 +202,10 @@ final class SystemInputAdapter: InputAdapter {
         resignActiveObserver = nil
     }
 
-    fileprivate func hotKeyPressed(direction: SwitchDirection) {
+    fileprivate func hotKeyPressed(mode: SwitcherMode, direction: SwitchDirection) {
         guard shortcutsEnabled else { return }
         shortcutIsActive = true
-        onEvent?(.allWindowsPressed(direction))
+        onEvent?(.switcherPressed(mode, direction))
     }
 
     private func modifiersChanged(_ flags: NSEvent.ModifierFlags) {

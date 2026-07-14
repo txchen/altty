@@ -59,12 +59,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func receive(_ event: ShortcutEvent) {
         switch event {
-        case let .allWindowsPressed(direction):
+        case let .switcherPressed(mode, direction):
             let priorInvocation = shortcutInvocationTask
             shortcutInvocationTask = Task { [weak self] in
                 await priorInvocation?.value
                 guard let self else { return }
-                self.run(await self.environment.engine.invokeAllWindowsSwitch(
+                self.run(await self.environment.engine.invokeSwitch(
+                    mode: mode,
                     direction: direction
                 ))
                 self.refreshPresentation()
@@ -75,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { [weak self] in
                 await invocation?.value
                 guard let self else { return }
-                self.run(self.environment.engine.confirmAllWindowsSwitch())
+                self.run(self.environment.engine.confirmSwitch())
                 self.refreshPresentation()
             }
         case let .cancel(reason):

@@ -127,9 +127,17 @@ enum SwitchingError: Equatable, Sendable {
 
 enum SwitcherMode: Equatable, Sendable {
     case allWindows
+    case currentApp
 
-    var title: String { "All Windows" }
-    var shortcutDescription: String { "⌥Tab" }
+    private var presentation: (title: String, shortcutDescription: String) {
+        switch self {
+        case .allWindows: ("All Windows", "⌥Tab")
+        case .currentApp: ("Current App", "⌥`")
+        }
+    }
+
+    var title: String { presentation.title }
+    var shortcutDescription: String { presentation.shortcutDescription }
 }
 
 enum SwitchDirection: Equatable, Sendable {
@@ -317,9 +325,23 @@ final class SwitcherEngine {
     }
 
     func beginAllWindowsSwitch(direction: SwitchDirection = .forward) async -> [SwitcherEffect] {
+        await beginSwitch(mode: .allWindows, direction: direction)
+    }
+
+    func beginSwitch(
+        mode: SwitcherMode,
+        direction: SwitchDirection
+    ) async -> [SwitcherEffect] {
         guard activeSwitchSession == nil else { return [] }
         let snapshot = await inventory.snapshot()
-        let candidates = snapshot.windows
+        let invocationPID = snapshot.frontmostApplicationPID
+            ?? snapshot.focusedWindow?.pid
+        let candidates = switch mode {
+        case .allWindows:
+            snapshot.windows
+        case .currentApp:
+            snapshot.windows.filter { $0.pid == invocationPID }
+        }
         guard !candidates.isEmpty else { return [] }
 
         let origin = snapshot.focusedWindow
@@ -337,8 +359,8 @@ final class SwitcherEngine {
             selectedIndex = direction == .forward ? 0 : candidates.count - 1
         }
         activeSwitchSession = SwitcherSession(
-            mode: .allWindows,
-            invocationPID: candidates.first(where: \.applicationIsFrontmost)?.pid ?? origin?.pid,
+            mode: mode,
+            invocationPID: invocationPID,
             candidates: candidates,
             origin: origin,
             selectedIndex: selectedIndex,
@@ -346,13 +368,23 @@ final class SwitcherEngine {
             panelPresentationDeadlineMilliseconds: clock.nowMilliseconds + 125
         )
 
-        if candidates.count == 1 { return confirmAllWindowsSwitch() }
+        if candidates.count == 1 { return confirmSwitch() }
         return [.scheduleSwitcherPanel(delayMilliseconds: 125)]
     }
 
     func invokeAllWindowsSwitch(direction: SwitchDirection) async -> [SwitcherEffect] {
-        if activeSwitchSession == nil {
-            return await beginAllWindowsSwitch(direction: direction)
+        await invokeSwitch(mode: .allWindows, direction: direction)
+    }
+
+    func invokeSwitch(
+        mode: SwitcherMode,
+        direction: SwitchDirection
+    ) async -> [SwitcherEffect] {
+        guard let session = activeSwitchSession else {
+            return await beginSwitch(mode: mode, direction: direction)
+        }
+        guard session.mode == mode else {
+            return receiveSession(.cancel(.shortcutInterrupted))
         }
         return receiveSession(.navigate(direction))
     }
@@ -391,14 +423,14 @@ final class SwitcherEngine {
                 session.selectedIndex = index
                 activeSwitchSession = session
             }
-            return confirmAllWindowsSwitch()
+            return confirmSwitch()
         case .cancel:
             activeSwitchSession = nil
             return [.endActiveSession]
         }
     }
 
-    func confirmAllWindowsSwitch() -> [SwitcherEffect] {
+    func confirmSwitch() -> [SwitcherEffect] {
         guard var session = activeSwitchSession,
               session.phase == .waitingForModifierRelease else { return [] }
         session.phase = session.target.isMinimized ? .deminimizing : .focusing

@@ -106,12 +106,14 @@ struct WindowInventorySnapshot: Equatable, Sendable {
     let activeSpaceIDs: [UInt64]
     let windows: [SwitchableWindow]
     let focusedWindow: WindowIdentity?
+    let frontmostApplicationPID: ProcessID?
 
     static let empty = WindowInventorySnapshot(
         generation: 0,
         activeSpaceIDs: [],
         windows: [],
-        focusedWindow: nil
+        focusedWindow: nil,
+        frontmostApplicationPID: nil
     )
 }
 
@@ -182,6 +184,7 @@ actor WindowInventory: InventoryAdapter {
     private var applications: [ProcessID: ApplicationState] = [:]
     private var mostRecentFirst: [WindowIdentity] = []
     private var focusedWindow: WindowIdentity?
+    private var frontmostApplicationPID: ProcessID?
     private var pendingEnrichment: Set<WindowIdentity> = []
     private var invalidatedWhileEnriching: Set<WindowIdentity> = []
     private var coldStartFrontToBack: [WindowIdentity: Int] = [:]
@@ -203,6 +206,7 @@ actor WindowInventory: InventoryAdapter {
             guard records[identity.wid]?.identity == identity else { return [] }
             hasObservedFocus = true
             focusedWindow = identity
+            setFrontmostApplication(identity.pid)
             mostRecentFirst.removeAll { $0 == identity }
             mostRecentFirst.insert(identity, at: 0)
             return []
@@ -239,6 +243,7 @@ actor WindowInventory: InventoryAdapter {
             records.removeAll()
             mostRecentFirst.removeAll()
             focusedWindow = nil
+            frontmostApplicationPID = nil
             pendingEnrichment.removeAll()
             invalidatedWhileEnriching.removeAll()
             coldStartFrontToBack.removeAll()
@@ -271,7 +276,8 @@ actor WindowInventory: InventoryAdapter {
             generation: generation,
             activeSpaceIDs: activeSpaceIDs,
             windows: windows,
-            focusedWindow: focusedWindow
+            focusedWindow: focusedWindow,
+            frontmostApplicationPID: frontmostApplicationPID
         )
     }
 
@@ -404,6 +410,7 @@ actor WindowInventory: InventoryAdapter {
     private func apply(_ event: WorkspaceApplicationEvent) {
         switch event {
         case let .snapshot(facts):
+            frontmostApplicationPID = facts.first(where: \.isFrontmost)?.pid
             applications = Dictionary(uniqueKeysWithValues: facts.map { fact in
                 (fact.pid, ApplicationState(
                     bundleIdentifier: fact.bundleIdentifier,
@@ -421,22 +428,29 @@ actor WindowInventory: InventoryAdapter {
                 isHidden: fact.isHidden,
                 isFrontmost: fact.isFrontmost
             )
+            if fact.isFrontmost { setFrontmostApplication(fact.pid) }
         case let .hidden(pid, isHidden):
             var application = applications[pid] ?? ApplicationState()
             application.isHidden = isHidden
             applications[pid] = application
         case let .activated(pid):
-            for key in Array(applications.keys) {
-                applications[key]?.isFrontmost = key == pid
-            }
-            if applications[pid] == nil {
-                applications[pid] = ApplicationState(isFrontmost: true)
-            }
+            setFrontmostApplication(pid)
         case let .terminated(pid):
+            if frontmostApplicationPID == pid { frontmostApplicationPID = nil }
             applications.removeValue(forKey: pid)
             for record in Array(records.values) where record.identity.pid == pid {
                 remove(record.identity)
             }
+        }
+    }
+
+    private func setFrontmostApplication(_ pid: ProcessID) {
+        frontmostApplicationPID = pid
+        for key in Array(applications.keys) {
+            applications[key]?.isFrontmost = key == pid
+        }
+        if applications[pid] == nil {
+            applications[pid] = ApplicationState(isFrontmost: true)
         }
     }
 }

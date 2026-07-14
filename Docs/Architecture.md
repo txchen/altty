@@ -38,9 +38,11 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 - Workspace launch, termination, activation and hidden/unhidden notifications update only application-owned fields. Hidden-app and minimized real windows remain eligible.
 - Active Space replacement increments the inventory generation and discards the prior records. Within a generation, events must match WID and PID, and a newly created/reused WID starts without prior metadata or MRU. Cold start keeps visible candidates in front-to-back order and defers minimized/hidden candidates with deterministic WID ordering.
 
-## Interactive All-Windows Session
+## Interactive Switcher Sessions
 
 - Option-Tab immediately snapshots the Active Space candidate order, invocation PID and temporary selection. Quick release begins verified exact-WID focus without presenting UI.
+- Option-Grave snapshots the frontmost PID before presentation and filters the same global MRU to that owner for the entire Current-App session.
 - A session that remains active for 125 ms presents a compact vertical list. Repeated Tab and Shift-Tab, mouse hover and wheel update only the temporary selection; release or click confirms, while Escape, outside click and lost interaction context cancel.
 - Session rows remain stable under ordinary inventory changes and new windows. Destroyed candidates are removed, with selection advancing safely, and generation changes fail closed.
+- A different mode shortcut cancels an unconfirmed session; once exact-WID confirmation begins, that transaction finishes before a later shortcut press can start a fresh session and snapshot. Modes never transition in place.
 - No thumbnails or live focus previews are supported by design.

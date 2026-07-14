@@ -40,6 +40,32 @@ scripts/test.sh --filter realReadOnlyActiveSpaceInventoryMatchesControlledFixtur
 The inactive-WID variable is optional, but supplying it verifies that windows
 the fixture placed on a non-presented Space are absent from the snapshot.
 
+The All-Windows focus smoke test changes focus. Launch a controlled fixture
+application with at least two windows on the Active Space, list the frontmost
+origin WID first, and explicitly run:
+
+```sh
+ALTTY_RUN_FOCUS_SMOKE=1 \
+ALTTY_FOCUS_FIXTURE_PID=<pid> \
+ALTTY_FOCUS_FIXTURE_WIDS=<origin-wid,target-wid> \
+scripts/test.sh --filter realImmediateAllWindowsShortcutFocusesTheNextWindow
+```
+
+The Current-App focus smoke test changes focus. Launch a controlled fixture
+application with at least three windows on the Active Space, list the frontmost
+origin WID first, and explicitly run:
+
+```sh
+ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE=1 \
+ALTTY_FOCUS_FIXTURE_PID=<pid> \
+ALTTY_FOCUS_FIXTURE_WIDS=<origin-wid,target-wid,other-wid> \
+scripts/test.sh --filter realCurrentAppShortcutSwitchesAmongWindowsOwnedByFrontmostApplication
+```
+
+The smoke test sends Option-Grave twice while Option remains held, verifies
+that the third WID is promoted in the shared MRU, and restores the fixture's
+origin window before exiting. Both focus smoke tests restore their origin WID.
+
 ## Current foundation
 
 - Menu bar app

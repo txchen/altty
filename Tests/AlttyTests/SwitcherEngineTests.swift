@@ -172,10 +172,10 @@ private final class ImmediateSwitchSmokeCoordinator {
 
     private func receive(_ event: ShortcutEvent) {
         switch event {
-        case .allWindowsPressed:
+        case let .switcherPressed(mode, direction):
             invocationTask = Task { [weak self] in
                 guard let self else { return }
-                self.run(await self.engine.beginAllWindowsSwitch())
+                self.run(await self.engine.invokeSwitch(mode: mode, direction: direction))
             }
         case .holdModifiersReleased:
             let invocation = invocationTask
@@ -183,7 +183,7 @@ private final class ImmediateSwitchSmokeCoordinator {
             Task { [weak self] in
                 await invocation?.value
                 guard let self else { return }
-                self.run(self.engine.confirmAllWindowsSwitch())
+                self.run(self.engine.confirmSwitch())
             }
         case .cancel:
             invocationTask?.cancel()
@@ -262,22 +262,45 @@ struct WindowServerSmokeTests {
         }
     }
 
-    @Test func realImmediateSwitchTargetsTwoWindowsOwnedByTheSameApplication() async {
-        guard getenv("ALTTY_RUN_FOCUS_SMOKE").map({ String(cString: $0) }) == "1" else { return }
+    @Test func realImmediateAllWindowsShortcutFocusesTheNextWindow() async {
+        guard ProcessInfo.processInfo.environment["ALTTY_RUN_FOCUS_SMOKE"] == "1" else { return }
+        await runFocusSmoke(
+            keyCode: CGKeyCode(kVK_Tab),
+            minimumWindowCount: 2,
+            pressCount: 1
+        )
+    }
+
+    @Test func realCurrentAppShortcutSwitchesAmongWindowsOwnedByFrontmostApplication() async {
+        guard ProcessInfo.processInfo.environment["ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE"] == "1" else {
+            return
+        }
+        await runFocusSmoke(
+            keyCode: CGKeyCode(kVK_ANSI_Grave),
+            minimumWindowCount: 3,
+            pressCount: 2
+        )
+    }
+
+    private func runFocusSmoke(
+        keyCode: CGKeyCode,
+        minimumWindowCount: Int,
+        pressCount: Int
+    ) async {
         guard let pidText = getenv("ALTTY_FOCUS_FIXTURE_PID").map({ String(cString: $0) }),
               let pid = ProcessID(pidText),
               let widText = getenv("ALTTY_FOCUS_FIXTURE_WIDS").map({ String(cString: $0) }) else {
-            Issue.record("Set ALTTY_FOCUS_FIXTURE_PID and two comma-separated ALTTY_FOCUS_FIXTURE_WIDS")
+            Issue.record("Set ALTTY_FOCUS_FIXTURE_PID and comma-separated ALTTY_FOCUS_FIXTURE_WIDS")
             return
         }
         let wids = widText.split(separator: ",").compactMap { WindowID($0) }
-        guard wids.count == 2, wids[0] != wids[1] else {
-            Issue.record("ALTTY_FOCUS_FIXTURE_WIDS must contain distinct origin,target WIDs from one application")
+        guard wids.count >= minimumWindowCount, Set(wids).count == wids.count else {
+            Issue.record("ALTTY_FOCUS_FIXTURE_WIDS must contain at least \(minimumWindowCount) distinct WIDs from one application")
             return
         }
 
         let origin = WindowIdentity(wid: wids[0], pid: pid, generation: 1)
-        let target = WindowIdentity(wid: wids[1], pid: pid, generation: 1)
+        let target = WindowIdentity(wid: wids[pressCount], pid: pid, generation: 1)
         let windowServer = SystemWindowServerAdapter()
         let accessibility = SystemAccessibilityAdapter()
         guard await windowServer.focus(origin) else {
@@ -299,10 +322,9 @@ struct WindowServerSmokeTests {
         let engine = SwitcherEngine(inventory: inventory)
         _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
             activeSpaceIDs: [1],
-            windows: [
-                WindowServerWindow(wid: origin.wid, pid: pid, frontToBackOrder: 0),
-                WindowServerWindow(wid: target.wid, pid: pid, frontToBackOrder: 1),
-            ]
+            windows: wids.enumerated().map { index, wid in
+                WindowServerWindow(wid: wid, pid: pid, frontToBackOrder: index)
+            }
         )))
         let semantics = WindowSemanticPatch(
             title: .value("Fixture"),
@@ -312,8 +334,20 @@ struct WindowServerSmokeTests {
             isFullscreen: .value(false),
             isTransient: .value(false)
         )
-        _ = await engine.receiveInventory(.semanticsChanged(origin, semantics))
-        _ = await engine.receiveInventory(.semanticsChanged(target, semantics))
+        for wid in wids {
+            _ = await engine.receiveInventory(.semanticsChanged(
+                WindowIdentity(wid: wid, pid: pid, generation: 1),
+                semantics
+            ))
+        }
+        _ = await engine.receiveInventory(.workspaceChanged(.snapshot([
+            WorkspaceApplicationFacts(
+                pid: pid,
+                bundleIdentifier: "app.altty.focus-fixture",
+                isHidden: false,
+                isFrontmost: true
+            ),
+        ])))
         _ = await engine.receiveInventory(.focused(origin))
 
         _ = NSApplication.shared
@@ -326,8 +360,10 @@ struct WindowServerSmokeTests {
         }
 
         postKey(CGKeyCode(kVK_Option), keyDown: true, flags: .maskAlternate)
-        postKey(CGKeyCode(kVK_Tab), keyDown: true, flags: .maskAlternate)
-        postKey(CGKeyCode(kVK_Tab), keyDown: false, flags: .maskAlternate)
+        for _ in 0..<pressCount {
+            postKey(keyCode, keyDown: true, flags: .maskAlternate)
+            postKey(keyCode, keyDown: false, flags: .maskAlternate)
+        }
         postKey(CGKeyCode(kVK_Option), keyDown: false, flags: [])
         for _ in 0..<80 where !coordinator.completed {
             try? await Task.sleep(for: .milliseconds(25))
@@ -335,7 +371,7 @@ struct WindowServerSmokeTests {
 
         coordinator.stop()
         #expect(coordinator.completed)
-        #expect(await engine.inventorySnapshot().windows.map(\.wid) == [target.wid, origin.wid])
+        #expect(await engine.inventorySnapshot().windows.first?.wid == target.wid)
 
         #expect(await windowServer.focus(origin))
     }
@@ -365,7 +401,7 @@ struct InputSmokeTests {
         #expect(events.isEmpty)
     }
 
-    @Test func realDefaultOptionTabRegistrationDoesNotChangeSystemSettings() {
+    @Test func realDefaultSwitcherShortcutPairRegistrationDoesNotChangeSystemSettings() {
         guard getenv("ALTTY_RUN_SHORTCUT_SMOKE").map({ String(cString: $0) }) == "1" else { return }
         let input = SystemInputAdapter()
         input.install { _ in }
@@ -729,10 +765,10 @@ struct AllWindowsSwitcherSessionTests {
 
         let (quickEngine, _) = await makeInteractiveEngine()
         _ = await quickEngine.beginAllWindowsSwitch()
-        #expect(quickEngine.confirmAllWindowsSwitch() == [
+        #expect(quickEngine.confirmSwitch() == [
             .focusWindow(WindowIdentity(wid: 20, pid: 200, generation: 1)),
         ])
-        #expect(quickEngine.confirmAllWindowsSwitch() == [])
+        #expect(quickEngine.confirmSwitch() == [])
         #expect(quickEngine.receiveSession(.panelDelayElapsed) == [])
     }
 
@@ -874,7 +910,7 @@ struct AllWindowsSwitcherSessionTests {
             .scheduleSwitcherPanel(delayMilliseconds: 125),
         ])
         #expect(engine.activeSwitchSession?.target.identity.wid == 10)
-        #expect(engine.confirmAllWindowsSwitch() == [
+        #expect(engine.confirmSwitch() == [
             .focusWindow(WindowIdentity(wid: 10, pid: 100, generation: 1)),
         ])
     }
@@ -901,7 +937,7 @@ struct AllWindowsSwitcherSessionTests {
         #expect(await engine.beginAllWindowsSwitch() == [
             .scheduleSwitcherPanel(delayMilliseconds: 125),
         ])
-        #expect(engine.confirmAllWindowsSwitch() == [.deminimizeWindow(target)])
+        #expect(engine.confirmSwitch() == [.deminimizeWindow(target)])
         #expect(await engine.receiveSwitching(.deminimizeCompleted(target, succeeded: true)) == [
             .focusWindow(target),
         ])
@@ -935,7 +971,7 @@ struct AllWindowsSwitcherSessionTests {
         _ = await engine.receiveInventory(.focused(origin))
 
         _ = await engine.beginAllWindowsSwitch()
-        #expect(engine.confirmAllWindowsSwitch() == [.focusWindow(target)])
+        #expect(engine.confirmSwitch() == [.focusWindow(target)])
         #expect(await engine.receiveSwitching(.focusCompleted(target, succeeded: true)) == [
             .verifyFocus(target),
         ])
@@ -975,7 +1011,7 @@ struct AllWindowsSwitcherSessionTests {
         _ = await engine.receiveInventory(.focused(origin))
 
         _ = await engine.beginAllWindowsSwitch()
-        _ = engine.confirmAllWindowsSwitch()
+        _ = engine.confirmSwitch()
         #expect(await engine.receiveInventory(.destroyed(target)) == [
             .endActiveSession,
             .recoverFailedFocus(target: target, origin: origin),
@@ -1007,7 +1043,7 @@ struct AllWindowsSwitcherSessionTests {
         _ = await engine.receiveInventory(.focused(origin))
 
         _ = await engine.beginAllWindowsSwitch()
-        #expect(engine.confirmAllWindowsSwitch() == [.deminimizeWindow(target)])
+        #expect(engine.confirmSwitch() == [.deminimizeWindow(target)])
         #expect(await engine.receiveSwitching(.deminimizeCompleted(target, succeeded: false)) == [
             .endActiveSession,
             .recoverFailedFocus(target: target, origin: origin),
@@ -1084,7 +1120,7 @@ struct AllWindowsSwitcherSessionTests {
 
         _ = engine.receive(.accessibilityChanged(.unavailable))
         #expect(engine.activeSwitchSession == nil)
-        #expect(engine.confirmAllWindowsSwitch() == [])
+        #expect(engine.confirmSwitch() == [])
     }
 
     @Test func targetDestructionBeforeModifierReleaseAdvancesWithoutFocusingAStaleWID() async {
@@ -1106,7 +1142,7 @@ struct AllWindowsSwitcherSessionTests {
 
         #expect(await engine.receiveInventory(.destroyed(target)) == [])
         #expect(engine.activeSwitchSession?.target.identity == origin)
-        #expect(engine.confirmAllWindowsSwitch() == [.focusWindow(origin)])
+        #expect(engine.confirmSwitch() == [.focusWindow(origin)])
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10])
     }
 
@@ -1150,7 +1186,7 @@ struct AllWindowsSwitcherSessionTests {
             .endActiveSession,
         ])
         #expect(engine.activeSwitchSession == nil)
-        #expect(engine.confirmAllWindowsSwitch() == [])
+        #expect(engine.confirmSwitch() == [])
     }
 
     @Test func semanticMutationWaitsUntilTheNextSession() async {
@@ -1174,9 +1210,271 @@ struct AllWindowsSwitcherSessionTests {
             .enrichWindows([target]),
         ])
         #expect(engine.activeSwitchSession?.target.identity == target)
-        #expect(engine.confirmAllWindowsSwitch() == [.focusWindow(target)])
+        #expect(engine.confirmSwitch() == [.focusWindow(target)])
     }
 
+}
+
+@MainActor
+struct CurrentAppSwitcherSessionTests {
+    private func makeEngine(
+        windows: [(wid: WindowID, pid: ProcessID, transient: Bool)],
+        frontmostPID: ProcessID,
+        focusedWID: WindowID?,
+        clock: any SwitcherClock = SystemSwitcherClock()
+    ) async -> (SwitcherEngine, [WindowIdentity]) {
+        let inventory = WindowInventory()
+        let engine = SwitcherEngine(inventory: inventory, clock: clock)
+        _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
+            activeSpaceIDs: [1],
+            windows: windows.enumerated().map { index, window in
+                WindowServerWindow(
+                    wid: window.wid,
+                    pid: window.pid,
+                    frontToBackOrder: index
+                )
+            }
+        )))
+        let identities = windows.map {
+            WindowIdentity(wid: $0.wid, pid: $0.pid, generation: 1)
+        }
+        for (identity, window) in zip(identities, windows) {
+            _ = await engine.receiveInventory(.semanticsChanged(
+                identity,
+                WindowSemanticPatch(
+                    title: .value("Window \(identity.wid)"),
+                    role: .value("AXWindow"),
+                    subrole: .value("AXStandardWindow"),
+                    isMinimized: .value(false),
+                    isFullscreen: .value(false),
+                    isTransient: .value(window.transient)
+                )
+            ))
+        }
+        let pids = windows.map(\.pid).reduce(into: [ProcessID]()) { result, pid in
+            if !result.contains(pid) { result.append(pid) }
+        }
+        _ = await engine.receiveInventory(.workspaceChanged(.snapshot(pids.map { pid in
+            WorkspaceApplicationFacts(
+                pid: pid,
+                bundleIdentifier: "example.\(pid)",
+                isHidden: false,
+                isFrontmost: pid == frontmostPID
+            )
+        })))
+        if let focusedWID,
+           let focused = identities.first(where: { $0.wid == focusedWID }) {
+            _ = await engine.receiveInventory(.focused(focused))
+        }
+        return (engine, identities)
+    }
+
+    @Test func invocationSnapshotsFrontmostPIDAndFiltersTheGlobalMRUWithoutReordering() async {
+        let (engine, identities) = await makeEngine(
+            windows: [
+                (10, 100, false), (20, 200, false),
+                (30, 100, false), (40, 200, false),
+            ],
+            frontmostPID: 100,
+            focusedWID: 10
+        )
+
+        #expect(await engine.beginSwitch(mode: .currentApp, direction: .forward) == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        #expect(engine.activeSwitchSession?.mode == .currentApp)
+        #expect(engine.activeSwitchSession?.invocationPID == 100)
+        #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [
+            identities[0], identities[2],
+        ])
+        #expect(engine.activeSwitchSession?.target.identity == identities[2])
+        #expect(engine.confirmSwitch() == [.focusWindow(identities[2])])
+        #expect(await engine.receiveSwitching(
+            .focusCompleted(identities[2], succeeded: true)
+        ) == [.verifyFocus(identities[2])])
+        #expect(await engine.receiveSwitching(.focusPostconditionObserved(FocusedWindow(
+            wid: identities[2].wid,
+            pid: identities[2].pid
+        ))) == [.endActiveSession])
+        #expect(await engine.inventorySnapshot().windows.map(\.identity) == [
+            identities[2], identities[0], identities[1], identities[3],
+        ])
+    }
+
+    @Test func alternatingModesCancelThenStartFreshSessionsWithoutMixingSnapshots() async {
+        let (engine, identities) = await makeEngine(
+            windows: [(10, 100, false), (20, 200, false), (30, 100, false)],
+            frontmostPID: 100,
+            focusedWID: 10
+        )
+
+        #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        #expect(await engine.invokeSwitch(mode: .currentApp, direction: .forward) == [
+            .endActiveSession,
+        ])
+        #expect(engine.activeSwitchSession == nil)
+
+        #expect(await engine.invokeSwitch(mode: .currentApp, direction: .backward) == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        #expect(engine.activeSwitchSession?.mode == .currentApp)
+        #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [
+            identities[0], identities[2],
+        ])
+        #expect(engine.activeSwitchSession?.target.identity == identities[2])
+
+        #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [
+            .endActiveSession,
+        ])
+        #expect(engine.activeSwitchSession == nil)
+        #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        #expect(engine.activeSwitchSession?.mode == .allWindows)
+        #expect(engine.activeSwitchSession?.candidates.map(\.identity) == identities)
+    }
+
+    @Test func frontmostApplicationChangesAfterInvocationDoNotChangeTheOwnerFilter() async {
+        let (engine, identities) = await makeEngine(
+            windows: [(10, 100, false), (20, 200, false), (30, 100, false)],
+            frontmostPID: 100,
+            focusedWID: 10
+        )
+        _ = await engine.beginSwitch(mode: .currentApp, direction: .forward)
+
+        _ = await engine.receiveInventory(.workspaceChanged(.snapshot([
+            WorkspaceApplicationFacts(
+                pid: 100,
+                bundleIdentifier: "example.100",
+                isHidden: false,
+                isFrontmost: false
+            ),
+            WorkspaceApplicationFacts(
+                pid: 200,
+                bundleIdentifier: "example.200",
+                isHidden: false,
+                isFrontmost: true
+            ),
+        ])))
+
+        #expect(engine.activeSwitchSession?.invocationPID == 100)
+        #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [
+            identities[0], identities[2],
+        ])
+    }
+
+    @Test func windowlessFrontmostApplicationDoesNotBorrowThePreviousOwnersWindows() async {
+        let (engine, _) = await makeEngine(
+            windows: [(20, 200, false), (30, 200, false)],
+            frontmostPID: 200,
+            focusedWID: 20
+        )
+        _ = await engine.receiveInventory(.workspaceChanged(.snapshot([
+            WorkspaceApplicationFacts(
+                pid: 100,
+                bundleIdentifier: "example.windowless",
+                isHidden: false,
+                isFrontmost: true
+            ),
+            WorkspaceApplicationFacts(
+                pid: 200,
+                bundleIdentifier: "example.previous",
+                isHidden: false,
+                isFrontmost: false
+            ),
+        ])))
+
+        #expect(await engine.inventorySnapshot().frontmostApplicationPID == 100)
+        #expect(await engine.beginSwitch(mode: .currentApp, direction: .forward) == [])
+        #expect(engine.activeSwitchSession == nil)
+    }
+
+    @Test func committedFocusFinishesBeforeAnotherModeCanStartAFreshSession() async {
+        let (engine, identities) = await makeEngine(
+            windows: [(10, 100, false), (20, 200, false), (30, 200, false)],
+            frontmostPID: 100,
+            focusedWID: 10
+        )
+        _ = await engine.invokeAllWindowsSwitch(direction: .forward)
+        #expect(engine.confirmSwitch() == [.focusWindow(identities[1])])
+
+        #expect(await engine.invokeSwitch(mode: .currentApp, direction: .forward) == [])
+        #expect(engine.activeSwitchSession?.mode == .allWindows)
+        #expect(engine.activeSwitchSession?.phase == .focusing)
+        #expect(await engine.receiveSwitching(
+            .focusCompleted(identities[1], succeeded: true)
+        ) == [.verifyFocus(identities[1])])
+        #expect(await engine.receiveSwitching(.focusPostconditionObserved(FocusedWindow(
+            wid: identities[1].wid,
+            pid: identities[1].pid
+        ))) == [.endActiveSession])
+        #expect(engine.activeSwitchSession == nil)
+        #expect(await engine.inventorySnapshot().frontmostApplicationPID == 200)
+
+        #expect(await engine.invokeSwitch(mode: .currentApp, direction: .forward) == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        #expect(engine.activeSwitchSession?.mode == .currentApp)
+        #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [
+            identities[1], identities[2],
+        ])
+    }
+
+    @Test func emptySoleCurrentAndSoleDifferentCasesUseTheCommonSessionContract() async {
+        let emptyEngine = SwitcherEngine(inventory: WindowInventory())
+        #expect(await emptyEngine.beginSwitch(mode: .currentApp, direction: .forward) == [])
+        #expect(emptyEngine.activeSwitchSession == nil)
+
+        let (soleCurrentEngine, _) = await makeEngine(
+            windows: [(10, 100, false)],
+            frontmostPID: 100,
+            focusedWID: 10
+        )
+        #expect(await soleCurrentEngine.beginSwitch(mode: .currentApp, direction: .forward) == [])
+        #expect(soleCurrentEngine.activeSwitchSession == nil)
+
+        let (soleDifferentEngine, identities) = await makeEngine(
+            windows: [(9, 100, true), (20, 100, false)],
+            frontmostPID: 100,
+            focusedWID: 9
+        )
+        #expect(await soleDifferentEngine.beginSwitch(mode: .currentApp, direction: .forward) == [
+            .focusWindow(identities[1]),
+        ])
+        #expect(soleDifferentEngine.activeSwitchSession?.target.identity == identities[1])
+    }
+
+    @Test func heldCurrentAppSessionUsesSharedNavigationPanelAndExactWIDConfirmation() async {
+        let clock = ManualSwitcherClock()
+        let (engine, identities) = await makeEngine(
+            windows: [(10, 100, false), (20, 100, false), (30, 200, false)],
+            frontmostPID: 100,
+            focusedWID: 10,
+            clock: clock
+        )
+
+        #expect(await engine.beginSwitch(mode: .currentApp, direction: .forward) == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        clock.nowMilliseconds += 125
+        #expect(engine.receiveSession(.panelDelayElapsed) == [
+            .showSwitcherPanel(engine.activeSwitchSession!.panelState),
+        ])
+        #expect(engine.activeSwitchSession?.panelState.title == "Current App")
+        #expect(engine.activeSwitchSession?.panelState.shortcutDescription == "⌥`")
+        #expect(engine.activeSwitchSession?.panelState.rows.map(\.identity) == [
+            identities[0], identities[1],
+        ])
+        #expect(engine.receiveSession(.navigate(.backward)) == [
+            .updateSwitcherPanel(engine.activeSwitchSession!.panelState),
+        ])
+        #expect(engine.activeSwitchSession?.target.identity == identities[0])
+        #expect(engine.receiveSession(.confirm(identities[1])) == [
+            .focusWindow(identities[1]),
+        ])
+    }
 }
 
 @MainActor
