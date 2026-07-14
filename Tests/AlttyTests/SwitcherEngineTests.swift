@@ -840,6 +840,16 @@ struct AllWindowsSwitcherSessionTests {
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10, 20, 30])
     }
 
+    @Test func unexpectedFocusedWindowChangeCancelsLostInteractionContext() async {
+        let (engine, identities) = await makeInteractiveEngine()
+        _ = await engine.beginAllWindowsSwitch()
+
+        #expect(await engine.receiveInventory(.focused(identities[2])) == [
+            .endActiveSession,
+        ])
+        #expect(engine.activeSwitchSession == nil)
+    }
+
     @Test func modifierReleaseFocusesTheWindowAfterTheCurrentMRUItemWithWraparound() async {
         let inventory = WindowInventory()
         let engine = SwitcherEngine(inventory: inventory)
@@ -1288,5 +1298,70 @@ struct SwitcherPanelTests {
         panel.dismiss()
         #expect(!panel.observedState.isVisible)
         #expect(panel.observedState.rowCount == 0)
+    }
+
+    @Test func appKitPanelVisibilityFollowsTheEngineDeadlineAndActiveSession() async {
+        _ = NSApplication.shared
+        let clock = ManualSwitcherClock()
+        let inventory = WindowInventory()
+        let engine = SwitcherEngine(inventory: inventory, clock: clock)
+        _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
+            activeSpaceIDs: [1],
+            windows: [
+                WindowServerWindow(wid: 10, pid: 100, frontToBackOrder: 0),
+                WindowServerWindow(wid: 20, pid: 200, frontToBackOrder: 1),
+            ]
+        )))
+        let semantics = WindowSemanticPatch(
+            title: .value("Window"),
+            role: .value("AXWindow"),
+            subrole: .value("AXStandardWindow"),
+            isMinimized: .value(false),
+            isFullscreen: .value(false),
+            isTransient: .value(false)
+        )
+        let origin = WindowIdentity(wid: 10, pid: 100, generation: 1)
+        let target = WindowIdentity(wid: 20, pid: 200, generation: 1)
+        _ = await engine.receiveInventory(.semanticsChanged(origin, semantics))
+        _ = await engine.receiveInventory(.semanticsChanged(target, semantics))
+        _ = await engine.receiveInventory(.focused(origin))
+        let panel = SwitcherPanelController()
+
+        #expect(await engine.beginAllWindowsSwitch() == [
+            .scheduleSwitcherPanel(delayMilliseconds: 125),
+        ])
+        #expect(!panel.observedState.isVisible)
+        clock.nowMilliseconds += 124
+        applyPanelEffects(engine.receiveSession(.panelDelayElapsed), to: panel)
+        #expect(!panel.observedState.isVisible)
+        clock.nowMilliseconds += 1
+        applyPanelEffects(engine.receiveSession(.panelDelayElapsed), to: panel)
+        #expect(panel.observedState.isVisible)
+
+        applyPanelEffects(engine.receiveSession(.cancel(.escape)), to: panel)
+        #expect(!panel.observedState.isVisible)
+        _ = await engine.beginAllWindowsSwitch()
+        applyPanelEffects(engine.receiveSession(.cancel(.outsideClick)), to: panel)
+        clock.nowMilliseconds += 125
+        applyPanelEffects(engine.receiveSession(.panelDelayElapsed), to: panel)
+        #expect(!panel.observedState.isVisible)
+    }
+
+    private func applyPanelEffects(
+        _ effects: [SwitcherEffect],
+        to panel: SwitcherPanelController
+    ) {
+        for effect in effects {
+            switch effect {
+            case let .showSwitcherPanel(state):
+                panel.show(state: state)
+            case let .updateSwitcherPanel(state):
+                panel.update(state: state)
+            case .endActiveSession:
+                panel.dismiss()
+            default:
+                break
+            }
+        }
     }
 }

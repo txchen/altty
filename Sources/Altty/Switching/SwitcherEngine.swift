@@ -263,10 +263,9 @@ final class SwitcherEngine {
         }
         let identities = await inventory.apply(event)
         var effects: [SwitcherEffect] = identities.isEmpty ? [] : [.enrichWindows(identities)]
-        if case let .workspaceChanged(.activated(pid)) = event,
-           let session = activeSwitchSession,
+        if let session = activeSwitchSession,
            session.phase == .waitingForModifierRelease,
-           session.invocationPID != pid {
+           eventLosesInteractionContext(event, session: session) {
             activeSwitchSession = nil
             effects.append(.endActiveSession)
             return effects
@@ -464,6 +463,20 @@ final class SwitcherEngine {
         case .focused, .semanticsInvalidated, .semanticsChanged,
              .workspaceChanged(.snapshot), .workspaceChanged(.launched),
              .workspaceChanged(.hidden), .workspaceChanged(.activated):
+            false
+        }
+    }
+
+    private func eventLosesInteractionContext(
+        _ event: InventoryEvent,
+        session: SwitcherSession
+    ) -> Bool {
+        switch event {
+        case let .focused(identity):
+            identity != session.origin
+        case let .workspaceChanged(.activated(pid)):
+            session.invocationPID != pid
+        default:
             false
         }
     }
