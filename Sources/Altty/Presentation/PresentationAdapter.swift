@@ -10,12 +10,16 @@ protocol PresentationAdapter: AnyObject {
     func updateSwitcherPanel(state: SwitcherPanelState)
     func dismissSwitcherPanel()
     func presentSwitchingError(_ error: SwitchingError)
-    func openReleasesPage()
+    func checkForUpdates()
+    func openProjectPage()
+    func openSupportPage()
 }
 
 @MainActor
 final class AppKitPresentationAdapter: PresentationAdapter {
     private let exceptions: any ExceptionsAdapter
+    private let openURL: (URL) -> Bool
+    private let updateAction: any UpdateAction
     private var onCommand: ((SwitcherCommand) -> Void)?
     private var switchingErrorPanel: NSPanel?
     private lazy var menuBar = MenuBarController { [weak self] command in self?.onCommand?(command) }
@@ -24,8 +28,14 @@ final class AppKitPresentationAdapter: PresentationAdapter {
     }
     private lazy var switcherPanel = SwitcherPanelController()
 
-    init(exceptions: any ExceptionsAdapter) {
+    init(
+        exceptions: any ExceptionsAdapter,
+        openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        updateAction: (any UpdateAction)? = nil
+    ) {
         self.exceptions = exceptions
+        self.openURL = openURL
+        self.updateAction = updateAction ?? GitHubReleaseUpdateAction(openURL: openURL)
     }
 
     func install(onCommand: @escaping (SwitcherCommand) -> Void) {
@@ -103,8 +113,13 @@ final class AppKitPresentationAdapter: PresentationAdapter {
         }
     }
 
-    func openReleasesPage() {
-        guard let url = URL(string: "https://github.com/txchen/altty/releases") else { return }
-        NSWorkspace.shared.open(url)
+    func checkForUpdates() { updateAction.checkForUpdates() }
+
+    func openProjectPage() {
+        _ = openURL(URL(string: "https://github.com/txchen/altty")!)
+    }
+
+    func openSupportPage() {
+        _ = openURL(URL(string: "https://github.com/txchen/altty/issues")!)
     }
 }

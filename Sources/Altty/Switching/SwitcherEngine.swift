@@ -27,6 +27,12 @@ struct SwitcherPresentationState: Equatable, Sendable {
         error: nil,
         recoveryWarning: nil
     )
+    var generalSettings = GeneralSettingsState(
+        current: .defaults,
+        pending: nil,
+        error: nil,
+        recoveryWarning: nil
+    )
 
     var isReady: Bool { accessibility == .available && windowServer == .available }
 
@@ -93,10 +99,13 @@ enum SwitcherCommand: Equatable, Sendable {
     case openSettings
     case requestAccessibility
     case checkForUpdates
+    case openProject
+    case openSupport
     case quit
     case recheckReadiness
     case updateShortcut(SwitcherMode, ShortcutBinding)
     case replaceExceptionRules([ExceptionRule])
+    case replaceGeneralSettings(GeneralSettings)
 }
 
 enum SwitcherEvent: Equatable, Sendable {
@@ -118,7 +127,9 @@ enum SwitcherEffect: Equatable, Sendable {
     case recordDiagnostic(DiagnosticEvent)
     case presentSettings
     case requestAccessibility
-    case openReleasesPage
+    case checkForUpdates
+    case openProjectPage
+    case openSupportPage
     case terminate
     case enrichWindows([WindowIdentity])
     case startInventoryObservation
@@ -135,7 +146,13 @@ enum SwitcherEffect: Equatable, Sendable {
     case updateSwitcherPanel(SwitcherPanelState)
     case replaceShortcuts(ShortcutPair)
     case rollbackShortcuts(ShortcutPair)
+    case setLaunchAtLogin(Bool)
     case persistSettings(SettingsSnapshot)
+}
+
+enum LaunchAtLoginEvent: Equatable, Sendable {
+    case applied(Bool)
+    case failed(Bool)
 }
 
 enum SwitchingError: Equatable, Sendable {
@@ -190,6 +207,24 @@ struct SwitcherPanelState: Equatable, Sendable {
     let shortcutDescription: String
     let rows: [SwitcherPanelRow]
     let selectedIdentity: WindowIdentity
+    let invokingWindowIdentity: WindowIdentity?
+    let listPresentation: ListPresentationPreferences
+
+    init(
+        mode: SwitcherMode,
+        shortcutDescription: String,
+        rows: [SwitcherPanelRow],
+        selectedIdentity: WindowIdentity,
+        invokingWindowIdentity: WindowIdentity? = nil,
+        listPresentation: ListPresentationPreferences = .defaults
+    ) {
+        self.mode = mode
+        self.shortcutDescription = shortcutDescription
+        self.rows = rows
+        self.selectedIdentity = selectedIdentity
+        self.invokingWindowIdentity = invokingWindowIdentity
+        self.listPresentation = listPresentation
+    }
 
     var title: String { mode.title }
 }
@@ -221,6 +256,7 @@ struct SwitcherSession: Equatable, Sendable {
     var phase: SwitcherSessionPhase
     var panelIsVisible = false
     let panelPresentationDeadlineMilliseconds: Int64
+    let listPresentation: ListPresentationPreferences
 
     var target: SwitchableWindow { candidates[selectedIndex] }
 
@@ -241,7 +277,9 @@ struct SwitcherSession: Equatable, Sendable {
                     isFullscreen: candidate.isFullscreen
                 )
             },
-            selectedIdentity: target.identity
+            selectedIdentity: target.identity,
+            invokingWindowIdentity: origin,
+            listPresentation: listPresentation
         )
     }
 }
@@ -276,6 +314,7 @@ final class SwitcherEngine {
         clock: any SwitcherClock = SystemSwitcherClock(),
         shortcuts: ShortcutPair = .defaults,
         exceptionRules: [ExceptionRule] = [],
+        generalSettings: GeneralSettings = .defaults,
         settingsWarning: String? = nil
     ) {
         self.inventory = inventory
@@ -289,6 +328,12 @@ final class SwitcherEngine {
         )
         presentationState.exceptionSettings = ExceptionSettingsState(
             current: exceptionRules,
+            pending: nil,
+            error: nil,
+            recoveryWarning: settingsWarning
+        )
+        presentationState.generalSettings = GeneralSettingsState(
+            current: generalSettings,
             pending: nil,
             error: nil,
             recoveryWarning: settingsWarning
@@ -429,7 +474,8 @@ final class SwitcherEngine {
             origin: origin,
             selectedIndex: selectedIndex,
             phase: .waitingForModifierRelease,
-            panelPresentationDeadlineMilliseconds: clock.nowMilliseconds + 125
+            panelPresentationDeadlineMilliseconds: clock.nowMilliseconds + 125,
+            listPresentation: presentationState.generalSettings.current.listPresentation
         )
 
         if candidates.count == 1 { return confirmSwitch() }
@@ -578,13 +624,15 @@ final class SwitcherEngine {
         case .launch:
             let shortcutSettings = presentationState.shortcutSettings
             let exceptionSettings = presentationState.exceptionSettings
+            let generalSettings = presentationState.generalSettings
             activeSwitchSession = nil
             presentationState = SwitcherPresentationState(
                 hasLaunched: true,
                 accessibility: .unknown,
                 windowServer: .unknown,
                 shortcutSettings: shortcutSettings,
-                exceptionSettings: exceptionSettings
+                exceptionSettings: exceptionSettings,
+                generalSettings: generalSettings
             )
             return [.setShortcutsEnabled(false), .checkAccessibility, .checkWindowServer]
         case .accessibilityStatusMayHaveChanged:
@@ -596,7 +644,11 @@ final class SwitcherEngine {
         case .requestAccessibility:
             return [.requestAccessibility, .checkAccessibility]
         case .checkForUpdates:
-            return [.openReleasesPage]
+            return [.checkForUpdates]
+        case .openProject:
+            return [.openProjectPage]
+        case .openSupport:
+            return [.openSupportPage]
         case .quit:
             return [.terminate]
         case .recheckReadiness:
@@ -605,6 +657,24 @@ final class SwitcherEngine {
             return updateShortcut(mode: mode, binding: binding)
         case let .replaceExceptionRules(rules):
             return replaceExceptionRules(rules)
+        case let .replaceGeneralSettings(settings):
+            return replaceGeneralSettings(settings)
+        }
+    }
+
+    func receiveLaunchAtLogin(_ event: LaunchAtLoginEvent) -> [SwitcherEffect] {
+        switch event {
+        case let .applied(enabled):
+            guard let pending = presentationState.generalSettings.pending,
+                  pending.launchAtLogin == enabled else { return [] }
+            return [.persistSettings(settingsSnapshot(general: pending))]
+        case let .failed(enabled):
+            guard presentationState.generalSettings.pending?.launchAtLogin == enabled else {
+                return []
+            }
+            presentationState.generalSettings.pending = nil
+            presentationState.generalSettings.error = "Launch at login could not be changed. The previous setting remains active."
+            return []
         }
     }
 
@@ -617,7 +687,9 @@ final class SwitcherEngine {
             return [.persistSettings(SettingsSnapshot(
                 shortcuts: pair,
                 exceptionRules: presentationState.exceptionSettings.pending
-                    ?? presentationState.exceptionSettings.current
+                    ?? presentationState.exceptionSettings.current,
+                general: presentationState.generalSettings.pending
+                    ?? presentationState.generalSettings.current
             ))]
         case let .failed(pair, error):
             if presentationState.shortcutSettings.pending == pair {
@@ -635,7 +707,8 @@ final class SwitcherEngine {
             presentationState.shortcutSettings.recoveryWarning = "Saved shortcuts were unavailable, so Altty restored the defaults. \(error.message)"
             return [.persistSettings(SettingsSnapshot(
                 shortcuts: .defaults,
-                exceptionRules: presentationState.exceptionSettings.current
+                exceptionRules: presentationState.exceptionSettings.current,
+                general: presentationState.generalSettings.current
             ))]
         }
     }
@@ -646,19 +719,29 @@ final class SwitcherEngine {
             let savesShortcuts = presentationState.shortcutSettings.pending == snapshot.shortcuts
             let savesExceptions = presentationState.exceptionSettings.pending
                 == snapshot.exceptionRules
-            guard savesShortcuts || savesExceptions else { return [] }
+            let savesGeneral = presentationState.generalSettings.pending == snapshot.general
+            guard savesShortcuts || savesExceptions || savesGeneral else { return [] }
             if savesShortcuts {
                 presentationState.shortcutSettings.current = snapshot.shortcuts
                 presentationState.shortcutSettings.pending = nil
                 presentationState.shortcutSettings.error = nil
             }
-            guard savesExceptions else { return [] }
-            presentationState.exceptionSettings.current = snapshot.exceptionRules
-            presentationState.exceptionSettings.pending = nil
-            presentationState.exceptionSettings.error = nil
-            presentationState.exceptionSettings.recoveryWarning = nil
-            exceptionPolicy = ExceptionPolicy(rules: snapshot.exceptionRules)
-            return reconcileExceptionShortcutPolicy()
+            var effects: [SwitcherEffect] = []
+            if savesExceptions {
+                presentationState.exceptionSettings.current = snapshot.exceptionRules
+                presentationState.exceptionSettings.pending = nil
+                presentationState.exceptionSettings.error = nil
+                presentationState.exceptionSettings.recoveryWarning = nil
+                exceptionPolicy = ExceptionPolicy(rules: snapshot.exceptionRules)
+                effects.append(contentsOf: reconcileExceptionShortcutPolicy())
+            }
+            if savesGeneral {
+                presentationState.generalSettings.current = snapshot.general
+                presentationState.generalSettings.pending = nil
+                presentationState.generalSettings.error = nil
+                presentationState.generalSettings.recoveryWarning = nil
+            }
+            return effects
         case let .failed(snapshot):
             var effects: [SwitcherEffect] = []
             if presentationState.shortcutSettings.pending == snapshot.shortcuts {
@@ -671,6 +754,17 @@ final class SwitcherEngine {
             if presentationState.exceptionSettings.pending == snapshot.exceptionRules {
                 presentationState.exceptionSettings.pending = nil
                 presentationState.exceptionSettings.error = "Exception changes could not be saved. Previous rules remain active."
+            }
+            if presentationState.generalSettings.pending == snapshot.general {
+                let shouldRollbackLoginItem = snapshot.general.launchAtLogin
+                    != presentationState.generalSettings.current.launchAtLogin
+                presentationState.generalSettings.pending = nil
+                presentationState.generalSettings.error = "General settings could not be saved. Previous settings remain active."
+                if shouldRollbackLoginItem {
+                    effects.append(.setLaunchAtLogin(
+                        presentationState.generalSettings.current.launchAtLogin
+                    ))
+                }
             }
             return effects
         }
@@ -712,8 +806,39 @@ final class SwitcherEngine {
         return [.persistSettings(SettingsSnapshot(
             shortcuts: presentationState.shortcutSettings.pending
                 ?? presentationState.shortcutSettings.current,
-            exceptionRules: normalized
+            exceptionRules: normalized,
+            general: presentationState.generalSettings.pending
+                ?? presentationState.generalSettings.current
         ))]
+    }
+
+    private func replaceGeneralSettings(_ settings: GeneralSettings) -> [SwitcherEffect] {
+        guard settings.isValid else {
+            presentationState.generalSettings.pending = nil
+            presentationState.generalSettings.error = "List presentation must show between six and eight rows."
+            return []
+        }
+        guard settings != presentationState.generalSettings.current else {
+            presentationState.generalSettings.pending = nil
+            presentationState.generalSettings.error = nil
+            return []
+        }
+        presentationState.generalSettings.pending = settings
+        presentationState.generalSettings.error = nil
+        if settings.launchAtLogin != presentationState.generalSettings.current.launchAtLogin {
+            return [.setLaunchAtLogin(settings.launchAtLogin)]
+        }
+        return [.persistSettings(settingsSnapshot(general: settings))]
+    }
+
+    private func settingsSnapshot(general: GeneralSettings? = nil) -> SettingsSnapshot {
+        SettingsSnapshot(
+            shortcuts: presentationState.shortcutSettings.current,
+            exceptionRules: presentationState.exceptionSettings.current,
+            general: general
+                ?? presentationState.generalSettings.pending
+                ?? presentationState.generalSettings.current
+        )
     }
 
     private func endSessionEffects(
@@ -727,7 +852,9 @@ final class SwitcherEngine {
         } else if let pending = presentationState.exceptionSettings.pending {
             effects.append(.persistSettings(SettingsSnapshot(
                 shortcuts: presentationState.shortcutSettings.current,
-                exceptionRules: pending
+                exceptionRules: pending,
+                general: presentationState.generalSettings.pending
+                    ?? presentationState.generalSettings.current
             )))
         }
         return effects
@@ -746,12 +873,14 @@ final class SwitcherEngine {
     private func beginReadinessCheck() -> [SwitcherEffect] {
         let shortcutSettings = presentationState.shortcutSettings
         let exceptionSettings = presentationState.exceptionSettings
+        let generalSettings = presentationState.generalSettings
         presentationState = SwitcherPresentationState(
             hasLaunched: presentationState.hasLaunched,
             accessibility: .unknown,
             windowServer: .unknown,
             shortcutSettings: shortcutSettings,
-            exceptionSettings: exceptionSettings
+            exceptionSettings: exceptionSettings,
+            generalSettings: generalSettings
         )
         var effects: [SwitcherEffect] = [.setShortcutsEnabled(false)]
         effects.append(contentsOf: endSessionEffects())
@@ -773,7 +902,8 @@ final class SwitcherEngine {
                 accessibility: value,
                 windowServer: presentationState.windowServer,
                 shortcutSettings: presentationState.shortcutSettings,
-                exceptionSettings: presentationState.exceptionSettings
+                exceptionSettings: presentationState.exceptionSettings,
+                generalSettings: presentationState.generalSettings
             )
         case let .windowServerChanged(value):
             presentationState = SwitcherPresentationState(
@@ -781,7 +911,8 @@ final class SwitcherEngine {
                 accessibility: presentationState.accessibility,
                 windowServer: value,
                 shortcutSettings: presentationState.shortcutSettings,
-                exceptionSettings: presentationState.exceptionSettings
+                exceptionSettings: presentationState.exceptionSettings,
+                generalSettings: presentationState.generalSettings
             )
         }
         guard previousState != presentationState else { return [] }

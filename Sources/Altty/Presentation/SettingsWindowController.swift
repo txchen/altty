@@ -1,6 +1,37 @@
 import AppKit
 import Carbon
 
+struct ProductInformation: Equatable {
+    let name: String
+    let version: String
+    let build: String
+
+    var summary: String { "\(name) \(version) (\(build))" }
+
+    static var current: ProductInformation {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return ProductInformation(
+            name: info["CFBundleName"] as? String ?? "Altty",
+            version: info["CFBundleShortVersionString"] as? String ?? "Development",
+            build: info["CFBundleVersion"] as? String ?? "local"
+        )
+    }
+}
+
+enum SettingsAboutAction: Equatable {
+    case project
+    case support
+    case checkForUpdates
+}
+
+struct SettingsWindowObservedState: Equatable {
+    let paneTitles: [String]
+    let generalSettings: GeneralSettings
+    let generalInlineMessage: String?
+    let productSummary: String
+    let sidebarHasKeyboardFocus: Bool
+}
+
 @MainActor
 final class SettingsWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
     private struct Pane: Equatable {
@@ -23,11 +54,34 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let skyLightDetailLabel = NSTextField(wrappingLabelWithString: "Checking WindowServer capability.")
     private let accessibilityButton = NSButton(title: "Grant Accessibility…", target: nil, action: #selector(requestAccessibility))
     private let recheckButton = NSButton(title: "Check Readiness", target: nil, action: #selector(recheck))
+    private lazy var launchAtLoginCheckbox = NSButton(
+        checkboxWithTitle: "Launch Altty at login",
+        target: self,
+        action: #selector(generalControlsChanged)
+    )
+    private lazy var visibleRowsPopUp: NSPopUpButton = {
+        let control = NSPopUpButton()
+        control.addItems(withTitles: ["6 rows", "7 rows", "8 rows"])
+        control.target = self
+        control.action = #selector(generalControlsChanged)
+        return control
+    }()
+    private lazy var densityPopUp: NSPopUpButton = {
+        let control = NSPopUpButton()
+        control.addItems(withTitles: ListDensity.allCases.map(\.title))
+        control.target = self
+        control.action = #selector(generalControlsChanged)
+        return control
+    }()
+    private let generalMessageLabel = NSTextField(wrappingLabelWithString: "")
     private let contentContainer = NSView()
     private let sidebar = NSTableView()
     private let shortcutErrorLabel = NSTextField(wrappingLabelWithString: "")
     private let shortcutPendingLabel = NSTextField(labelWithString: "")
     private let exceptions: any ExceptionsAdapter
+    private let productInformation: ProductInformation
+    private var displayedGeneralSettings = GeneralSettings.defaults
+    private var generalInlineMessage: String?
     private lazy var exceptionsController = ExceptionsSettingsViewController(
         applications: exceptions
     ) {
@@ -49,18 +103,21 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     init(
         exceptions: any ExceptionsAdapter,
+        productInformation: ProductInformation = .current,
         onCommand: @escaping (SwitcherCommand) -> Void
     ) {
         self.exceptions = exceptions
+        self.productInformation = productInformation
         self.onCommand = onCommand
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 440),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "Altty Settings"
         window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 680, height: 600)
         super.init(window: window)
         accessibilityButton.target = self
         recheckButton.target = self
@@ -70,11 +127,22 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    var observedState: SettingsWindowObservedState {
+        SettingsWindowObservedState(
+            paneTitles: Pane.all.map(\.title),
+            generalSettings: displayedGeneralSettings,
+            generalInlineMessage: generalInlineMessage,
+            productSummary: productInformation.summary,
+            sidebarHasKeyboardFocus: window?.firstResponder === sidebar
+        )
+    }
+
     func show(state: SwitcherPresentationState) {
         update(state: state)
         window?.center()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        window?.makeFirstResponder(sidebar)
     }
 
     func update(state: SwitcherPresentationState) {
@@ -84,6 +152,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         skyLightStatusLabel.stringValue = state.skyLightStatusTitle
         skyLightDetailLabel.stringValue = state.skyLightDetail
         accessibilityButton.isHidden = !state.showsAccessibilityAction
+        updateGeneral(state.generalSettings)
         updateShortcuts(state.shortcutSettings)
         exceptionsController.update(state.exceptionSettings)
     }
@@ -96,6 +165,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         sidebar.headerView = nil
         sidebar.rowHeight = 32
         sidebar.style = .sourceList
+        sidebar.allowsEmptySelection = false
+        sidebar.setAccessibilityLabel("Settings sections")
         sidebar.dataSource = self
         sidebar.delegate = self
         let scroll = NSScrollView()
@@ -118,16 +189,25 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let pane = Pane.all[row]
         let cell = NSTableCellView()
-        let label = NSButton(title: pane.title, image: NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title) ?? NSImage(), target: nil, action: nil)
-        label.isBordered = false
-        label.imagePosition = .imageLeading
-        label.alignment = .left
+        let icon = NSImageView(image: NSImage(
+            systemSymbolName: pane.symbol,
+            accessibilityDescription: pane.title
+        ) ?? NSImage())
+        let label = NSTextField(labelWithString: pane.title)
+        icon.translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(icon)
         cell.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+            icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 10),
+            icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
+        cell.textField = label
+        cell.imageView = icon
         return cell
     }
 
@@ -156,6 +236,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             stack.addArrangedSubview(skyLightStatusLabel)
             stack.addArrangedSubview(skyLightDetailLabel)
             stack.addArrangedSubview(recheckButton)
+            stack.addArrangedSubview(separator())
+            stack.addArrangedSubview(launchAtLoginCheckbox)
+            stack.addArrangedSubview(formRow(label: "Visible rows", control: visibleRowsPopUp))
+            stack.addArrangedSubview(formRow(label: "Row spacing", control: densityPopUp))
+            generalMessageLabel.textColor = .systemOrange
+            generalMessageLabel.font = .systemFont(ofSize: 12)
+            generalMessageLabel.maximumNumberOfLines = 4
+            stack.addArrangedSubview(generalMessageLabel)
         } else if pane == .shortcuts {
             stack.addArrangedSubview(shortcutRow(
                 title: SwitcherMode.allWindows.title,
@@ -176,6 +264,34 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             stack.addArrangedSubview(shortcutErrorLabel)
         } else if pane == .exceptions {
             stack.addArrangedSubview(exceptionsController.view)
+        } else if pane == .about {
+            let product = NSTextField(labelWithString: productInformation.summary)
+            product.font = .systemFont(ofSize: 16, weight: .semibold)
+            let copyright = NSTextField(
+                wrappingLabelWithString: "A fast, window-first switcher for macOS."
+            )
+            copyright.textColor = .secondaryLabelColor
+            let project = NSButton(
+                title: "Project Website",
+                target: self,
+                action: #selector(openProject)
+            )
+            let support = NSButton(
+                title: "Support and Issues",
+                target: self,
+                action: #selector(openSupport)
+            )
+            let update = NSButton(
+                title: "Check for Updates…",
+                target: self,
+                action: #selector(checkForUpdates)
+            )
+            project.setAccessibilityLabel("Open Altty project website")
+            support.setAccessibilityLabel("Open Altty support and issues")
+            update.setAccessibilityLabel("Check for Altty updates")
+            stack.addArrangedSubview(product)
+            stack.addArrangedSubview(copyright)
+            stack.addArrangedSubview(NSStackView(views: [project, support, update]))
         }
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -200,6 +316,65 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     @objc private func recheck() { onCommand(.recheckReadiness) }
     @objc private func requestAccessibility() { onCommand(.requestAccessibility) }
+    @objc private func openProject() { performAboutAction(.project) }
+    @objc private func openSupport() { performAboutAction(.support) }
+    @objc private func checkForUpdates() { performAboutAction(.checkForUpdates) }
+
+    func performAboutAction(_ action: SettingsAboutAction) {
+        switch action {
+        case .project: onCommand(.openProject)
+        case .support: onCommand(.openSupport)
+        case .checkForUpdates: onCommand(.checkForUpdates)
+        }
+    }
+
+    func replaceGeneralSettings(_ settings: GeneralSettings) {
+        onCommand(.replaceGeneralSettings(settings))
+    }
+
+    @objc private func generalControlsChanged() {
+        guard (0..<3).contains(visibleRowsPopUp.indexOfSelectedItem),
+              ListDensity.allCases.indices.contains(densityPopUp.indexOfSelectedItem) else {
+            return
+        }
+        replaceGeneralSettings(GeneralSettings(
+            launchAtLogin: launchAtLoginCheckbox.state == .on,
+            listPresentation: ListPresentationPreferences(
+                visibleRowCount: visibleRowsPopUp.indexOfSelectedItem + 6,
+                density: ListDensity.allCases[densityPopUp.indexOfSelectedItem]
+            )
+        ))
+    }
+
+    private func updateGeneral(_ state: GeneralSettingsState) {
+        displayedGeneralSettings = state.displayed
+        generalInlineMessage = state.inlineMessage
+        launchAtLoginCheckbox.state = state.displayed.launchAtLogin ? .on : .off
+        visibleRowsPopUp.selectItem(at: state.displayed.listPresentation.visibleRowCount - 6)
+        densityPopUp.selectItem(at: ListDensity.allCases.firstIndex(
+            of: state.displayed.listPresentation.density
+        ) ?? 0)
+        generalMessageLabel.stringValue = state.inlineMessage ?? ""
+        generalMessageLabel.isHidden = state.inlineMessage == nil
+    }
+
+    private func separator() -> NSBox {
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.widthAnchor.constraint(equalToConstant: 430).isActive = true
+        return separator
+    }
+
+    private func formRow(label: String, control: NSView) -> NSView {
+        let labelView = NSTextField(labelWithString: label)
+        labelView.alignment = .right
+        labelView.widthAnchor.constraint(equalToConstant: 90).isActive = true
+        let row = NSStackView(views: [labelView, control])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        return row
+    }
 
     private func shortcutRow(
         title: String,

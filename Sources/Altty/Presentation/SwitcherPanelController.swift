@@ -7,6 +7,10 @@ struct SwitcherPanelObservedState: Equatable {
     let rowCount: Int
     let selectedIdentity: WindowIdentity?
     let rows: [SwitcherPanelObservedRow]
+    var displayIdentifier: String? = nil
+    var panelFrame: CGRect = .zero
+    var visibleRowCapacity: Int = 0
+    var selectedRowIsVisible: Bool = false
 }
 
 struct SwitcherPanelObservedRow: Equatable {
@@ -15,6 +19,54 @@ struct SwitcherPanelObservedRow: Equatable {
     let applicationName: String
     let badges: [String]
     let showsApplicationIcon: Bool
+    var usesSingleLineText: Bool = true
+}
+
+struct SwitcherDisplay: Equatable {
+    let identifier: String
+    let frame: CGRect
+    let visibleFrame: CGRect
+    let windowServerFrame: CGRect
+    let isPrimary: Bool
+}
+
+@MainActor
+protocol SwitcherDisplayProviding: AnyObject {
+    var pointerLocation: CGPoint { get }
+    var displays: [SwitcherDisplay] { get }
+    func frame(of window: WindowIdentity) -> CGRect?
+}
+
+@MainActor
+final class SystemSwitcherDisplayProvider: SwitcherDisplayProviding {
+    var pointerLocation: CGPoint { NSEvent.mouseLocation }
+
+    var displays: [SwitcherDisplay] {
+        NSScreen.screens.compactMap { screen in
+            guard let number = screen.deviceDescription[
+                NSDeviceDescriptionKey("NSScreenNumber")
+            ] as? NSNumber else { return nil }
+            let displayID = CGDirectDisplayID(number.uint32Value)
+            return SwitcherDisplay(
+                identifier: String(displayID),
+                frame: screen.frame,
+                visibleFrame: screen.visibleFrame,
+                windowServerFrame: CGDisplayBounds(displayID),
+                isPrimary: displayID == CGMainDisplayID()
+            )
+        }
+    }
+
+    func frame(of window: WindowIdentity) -> CGRect? {
+        guard let entries = CGWindowListCopyWindowInfo(
+            [.optionIncludingWindow],
+            CGWindowID(window.wid)
+        ) as? [[String: Any]],
+        let bounds = entries.first?[kCGWindowBounds as String] as? NSDictionary else {
+            return nil
+        }
+        return CGRect(dictionaryRepresentation: bounds)
+    }
 }
 
 @MainActor
@@ -27,6 +79,8 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
     private let shortcutLabel = NSTextField(labelWithString: "")
     let tableView = SwitcherTableView()
     private let scrollView = NSScrollView()
+    private let displayProvider: any SwitcherDisplayProviding
+    private var displayIdentifier: String?
 
     var observedState: SwitcherPanelObservedState {
         SwitcherPanelObservedState(
@@ -38,11 +92,16 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
             rows: (0..<tableView.numberOfRows).compactMap { row in
                 (tableView.view(atColumn: 0, row: row, makeIfNecessary: true)
                     as? SwitcherRowView)?.observedRow
-            }
+            },
+            displayIdentifier: displayIdentifier,
+            panelFrame: panel.frame,
+            visibleRowCapacity: state?.listPresentation.visibleRowCount ?? 0,
+            selectedRowIsVisible: selectedRowIsVisible
         )
     }
 
-    override init() {
+    init(displayProvider: any SwitcherDisplayProviding = SystemSwitcherDisplayProvider()) {
+        self.displayProvider = displayProvider
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 120),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
@@ -55,8 +114,9 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
 
     func show(state: SwitcherPanelState) {
         update(state: state)
-        centerOnPointerDisplay()
+        placePanel(state: state)
         panel.orderFrontRegardless()
+        panel.contentView?.layoutSubtreeIfNeeded()
     }
 
     func update(state: SwitcherPanelState) {
@@ -64,13 +124,14 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         titleLabel.stringValue = state.title
         shortcutLabel.stringValue = state.shortcutDescription
         tableView.reloadData()
+        tableView.rowHeight = rowHeight(for: state.listPresentation.density)
         if let selectedRow = state.rows.firstIndex(where: {
             $0.identity == state.selectedIdentity
         }) {
             tableView.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
             tableView.scrollRowToVisible(selectedRow)
         }
-        resizeForRows(state.rows.count)
+        resizeForRows(state.rows.count, preferences: state.listPresentation)
     }
 
     func dismiss() {
@@ -179,12 +240,16 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 2
+        labels.setHuggingPriority(.defaultLow, for: .horizontal)
+        labels.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let badges = stateBadges(for: rowState)
         let badgeLabel = NSTextField(labelWithString: badges.joined(separator: "  "))
         badgeLabel.font = .systemFont(ofSize: 10, weight: .medium)
         badgeLabel.textColor = .secondaryLabelColor
         badgeLabel.setAccessibilityLabel(badges.joined(separator: ", "))
+        badgeLabel.setContentHuggingPriority(.required, for: .horizontal)
+        badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let row = SwitcherRowView(
             views: [icon, labels, NSView(), badgeLabel],
@@ -192,7 +257,8 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         )
         row.setAccessibilityElement(true)
         row.setAccessibilityRole(.row)
-        row.setAccessibilityLabel("\(rowState.title), \(rowState.applicationName)")
+        let accessibleBadges = badges.isEmpty ? "" : ", \(badges.joined(separator: ", "))"
+        row.setAccessibilityLabel("\(rowState.title), \(rowState.applicationName)\(accessibleBadges)")
         return row
     }
 
@@ -228,19 +294,69 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         )
     }
 
-    private func resizeForRows(_ rowCount: Int) {
-        let visibleRows = min(max(rowCount, 1), 8)
-        panel.setContentSize(NSSize(width: 520, height: 40 + visibleRows * 56))
+    private var selectedRowIsVisible: Bool {
+        guard tableView.selectedRow >= 0 else { return false }
+        return tableView.rect(ofRow: tableView.selectedRow).intersects(
+            scrollView.documentVisibleRect
+        )
     }
 
-    private func centerOnPointerDisplay() {
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) }
-            ?? NSScreen.main
-        guard let frame = screen?.visibleFrame else { return }
-        panel.setFrameOrigin(NSPoint(
-            x: frame.midX - panel.frame.width / 2,
-            y: frame.midY - panel.frame.height / 2
+    private func rowHeight(for density: ListDensity) -> CGFloat {
+        density == .compact ? 52 : 60
+    }
+
+    private func resizeForRows(
+        _ rowCount: Int,
+        preferences: ListPresentationPreferences
+    ) {
+        let visibleRows = min(max(rowCount, 1), preferences.visibleRowCount)
+        let rowHeight = rowHeight(for: preferences.density)
+        panel.setContentSize(NSSize(
+            width: 520,
+            height: 40 + CGFloat(visibleRows) * (rowHeight + 2)
         ))
+    }
+
+    private func placePanel(state: SwitcherPanelState) {
+        let displays = displayProvider.displays
+        let invokingDisplay = state.invokingWindowIdentity
+            .flatMap(displayProvider.frame(of:))
+            .flatMap { windowFrame in
+                displays
+                    .map { display in
+                        (
+                            display: display,
+                            overlap: display.windowServerFrame.intersection(windowFrame).area
+                        )
+                    }
+                    .filter { $0.overlap > 0 }
+                    .max { $0.overlap < $1.overlap }?
+                    .display
+            }
+        let display = displays.first { $0.frame.contains(displayProvider.pointerLocation) }
+            ?? invokingDisplay
+            ?? displays.first(where: \.isPrimary)
+            ?? displays.first
+        guard let display else { return }
+        let visibleFrame = display.visibleFrame
+        let size = CGSize(
+            width: min(panel.frame.width, visibleFrame.width),
+            height: min(panel.frame.height, visibleFrame.height)
+        )
+        panel.setFrame(CGRect(
+            x: visibleFrame.midX - size.width / 2,
+            y: visibleFrame.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        ), display: false)
+        displayIdentifier = display.identifier
+    }
+}
+
+private extension CGRect {
+    var area: CGFloat {
+        guard !isNull, !isInfinite else { return 0 }
+        return max(width, 0) * max(height, 0)
     }
 }
 

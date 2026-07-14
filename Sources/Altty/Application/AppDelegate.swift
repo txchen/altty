@@ -125,8 +125,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 environment.presentation.presentSettings(state: environment.engine.presentationState)
             case .requestAccessibility:
                 environment.accessibility.requestPermission()
-            case .openReleasesPage:
-                environment.presentation.openReleasesPage()
+            case .checkForUpdates:
+                environment.presentation.checkForUpdates()
+            case .openProjectPage:
+                environment.presentation.openProjectPage()
+            case .openSupportPage:
+                environment.presentation.openSupportPage()
             case .terminate:
                 NSApp.terminate(nil)
             case let .enrichWindows(identities):
@@ -183,6 +187,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if case let .failure(error) = environment.input.replaceShortcuts(pair) {
                     run(environment.engine.receiveShortcutRegistration(.failed(pair, error)))
                     scheduleShortcutCleanupRetry()
+                }
+                refreshPresentation()
+            case let .setLaunchAtLogin(enabled):
+                do {
+                    try environment.launchAtLogin.setEnabled(enabled)
+                    run(environment.engine.receiveLaunchAtLogin(.applied(enabled)))
+                } catch {
+                    run(environment.engine.receiveLaunchAtLogin(.failed(enabled)))
                 }
                 refreshPresentation()
             case let .persistSettings(snapshot):

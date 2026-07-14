@@ -1,5 +1,12 @@
 import AppKit
 
+struct MenuBarObservedState: Equatable {
+    let readinessTitle: String
+    let statusTitles: [String]
+    let actionTitles: [String]
+    let showsAccessibilityAction: Bool
+}
+
 @MainActor
 final class MenuBarController: NSObject {
     private let onCommand: (SwitcherCommand) -> Void
@@ -9,6 +16,7 @@ final class MenuBarController: NSObject {
     private let skyLightItem = NSMenuItem(title: "SkyLight: Checking…", action: nil, keyEquivalent: "")
     private let recheckItem = NSMenuItem(title: "Check Readiness", action: #selector(recheck), keyEquivalent: "")
     private let accessibilityActionItem = NSMenuItem(title: "Grant Accessibility Permission…", action: #selector(requestAccessibility), keyEquivalent: "")
+    private var menu: NSMenu?
 
     init(onCommand: @escaping (SwitcherCommand) -> Void) { self.onCommand = onCommand }
 
@@ -32,7 +40,30 @@ final class MenuBarController: NSObject {
         menu.addItem(NSMenuItem(title: "Quit Altty", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != nil { $0.target = self } }
         item.menu = menu
+        self.menu = menu
         statusItem = item
+    }
+
+    var observedState: MenuBarObservedState {
+        MenuBarObservedState(
+            readinessTitle: readinessItem.title,
+            statusTitles: [
+                readinessItem.title,
+                accessibilityItem.title,
+                skyLightItem.title,
+            ],
+            actionTitles: menu?.items.compactMap { item in
+                guard item.action != nil, !item.isHidden else { return nil }
+                return item.title
+            } ?? [],
+            showsAccessibilityAction: !accessibilityActionItem.isHidden
+        )
+    }
+
+    func uninstall() {
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
+        statusItem = nil
+        menu = nil
     }
 
     func update(state: SwitcherPresentationState) {

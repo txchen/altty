@@ -45,7 +45,7 @@ struct SwitcherEngineTests {
 
         #expect(engine.send(.openSettings) == [.presentSettings])
         #expect(engine.send(.requestAccessibility) == [.requestAccessibility, .checkAccessibility])
-        #expect(engine.send(.checkForUpdates) == [.openReleasesPage])
+        #expect(engine.send(.checkForUpdates) == [.checkForUpdates])
         #expect(engine.send(.quit) == [.terminate])
         #expect(engine.send(.recheckReadiness) == [
             .setShortcutsEnabled(false),
@@ -1581,29 +1581,32 @@ struct SwitcherPanelTests {
         panel.onInteraction = { interactions.append($0) }
 
         panel.show(state: state)
-        #expect(panel.observedState == SwitcherPanelObservedState(
-            isVisible: true,
-            title: "All Windows",
-            shortcut: "⌥Tab",
-            rowCount: 2,
-            selectedIdentity: second.identity,
-            rows: [
-                SwitcherPanelObservedRow(
-                    identity: first.identity,
-                    title: "First",
-                    applicationName: "example.app.10",
-                    badges: ["Minimized"],
-                    showsApplicationIcon: true
-                ),
-                SwitcherPanelObservedRow(
-                    identity: second.identity,
-                    title: "Second",
-                    applicationName: "example.app.20",
-                    badges: ["Hidden", "Full Screen"],
-                    showsApplicationIcon: true
-                ),
-            ]
-        ))
+        let observed = panel.observedState
+        #expect(observed.isVisible)
+        #expect(observed.title == "All Windows")
+        #expect(observed.shortcut == "⌥Tab")
+        #expect(observed.rowCount == 2)
+        #expect(observed.selectedIdentity == second.identity)
+        #expect(observed.rows == [
+            SwitcherPanelObservedRow(
+                identity: first.identity,
+                title: "First",
+                applicationName: "example.app.10",
+                badges: ["Minimized"],
+                showsApplicationIcon: true
+            ),
+            SwitcherPanelObservedRow(
+                identity: second.identity,
+                title: "Second",
+                applicationName: "example.app.20",
+                badges: ["Hidden", "Full Screen"],
+                showsApplicationIcon: true
+            ),
+        ])
+        #expect(observed.displayIdentifier != nil)
+        #expect(observed.panelFrame != .zero)
+        #expect(observed.visibleRowCapacity == 7)
+        #expect(observed.selectedRowIsVisible)
 
         let firstRowLocation = panel.tableView.convert(
             NSPoint(
