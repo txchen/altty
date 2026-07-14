@@ -66,17 +66,18 @@ The smoke test sends Option-Grave twice while Option remains held, verifies
 that the third WID is promoted in the shared MRU, and restores the fixture's
 origin window before exiting. Both focus smoke tests restore their origin WID.
 
-Shortcut registration smoke testing changes no macOS shortcut preferences, but
-it does temporarily claim the configured chords. It registers and releases the
-pair, opens a foreground probe app that must receive physical Option-Tab and
-Option-Grave presses, and proves a second real Carbon registrar can claim the
-same chords. Focus the probe window and press both chords when prompted.
+Exception pass-through smoke testing changes no macOS shortcut preferences, but
+it does temporarily claim the configured chords. It installs an Ignore Always
+rule for a foreground probe app, verifies the engine unregisters both shortcuts,
+then requires the probe to receive physical Option-Tab and Option-Grave presses.
+It also proves a second real Carbon registrar can claim the same chords. Focus
+the probe window and press both chords when prompted.
 Run it on each supported keyboard layout when Option-Tab and Option-Grave are
 free:
 
 ```sh
 ALTTY_RUN_SHORTCUT_SMOKE=1 \
-scripts/test.sh --filter realDefaultSwitcherShortcutPairRegistrationDoesNotChangeSystemSettings
+scripts/test.sh --filter realIgnoredForegroundApplicationReceivesConfiguredShortcutPair
 ```
 
 ## Current foundation
@@ -86,6 +87,7 @@ scripts/test.sh --filter realDefaultSwitcherShortcutPairRegistrationDoesNotChang
 - Fail-closed readiness and recovery for Accessibility and SkyLight capability
 - Event-driven, generation-safe Active Space window inventory with lazy AX enrichment
 - Atomic configurable All-Windows and Current-App shortcut recorders with versioned local persistence
-- General, Shortcuts, Exceptions and About settings destinations
+- Persistent exact/prefix Exception rules with independent Hide and foreground Ignore policy
+- General, Shortcuts, management-first Exceptions and About settings destinations
 - Replaceable system-adapter boundaries assembled around `SwitcherEngine`
 - No thumbnails and no Screen Recording permission

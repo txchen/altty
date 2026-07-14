@@ -107,13 +107,15 @@ struct WindowInventorySnapshot: Equatable, Sendable {
     let windows: [SwitchableWindow]
     let focusedWindow: WindowIdentity?
     let frontmostApplicationPID: ProcessID?
+    let exceptionForegroundContext: ExceptionForegroundContext
 
     static let empty = WindowInventorySnapshot(
         generation: 0,
         activeSpaceIDs: [],
         windows: [],
         focusedWindow: nil,
-        frontmostApplicationPID: nil
+        frontmostApplicationPID: nil,
+        exceptionForegroundContext: .unknown
     )
 }
 
@@ -185,6 +187,7 @@ actor WindowInventory: InventoryAdapter {
     private var mostRecentFirst: [WindowIdentity] = []
     private var focusedWindow: WindowIdentity?
     private var frontmostApplicationPID: ProcessID?
+    private var hasLoadedActiveSpaceInventory = false
     private var pendingEnrichment: Set<WindowIdentity> = []
     private var invalidatedWhileEnriching: Set<WindowIdentity> = []
     private var coldStartFrontToBack: [WindowIdentity: Int] = [:]
@@ -244,6 +247,7 @@ actor WindowInventory: InventoryAdapter {
             mostRecentFirst.removeAll()
             focusedWindow = nil
             frontmostApplicationPID = nil
+            hasLoadedActiveSpaceInventory = false
             pendingEnrichment.removeAll()
             invalidatedWhileEnriching.removeAll()
             coldStartFrontToBack.removeAll()
@@ -272,17 +276,38 @@ actor WindowInventory: InventoryAdapter {
                 applicationBundlePath: application.bundlePath
             )
         }
+        let frontmostApplication = frontmostApplicationPID.flatMap { applications[$0] }
+        let frontmostWindowIsFullscreen: Bool?
+        if !hasLoadedActiveSpaceInventory {
+            frontmostWindowIsFullscreen = nil
+        } else if let focusedWindow {
+            if focusedWindow.pid != frontmostApplicationPID {
+                frontmostWindowIsFullscreen = nil
+            } else if let fullscreen = records[focusedWindow.wid]?.isFullscreen,
+                      !fullscreen.isStale {
+                frontmostWindowIsFullscreen = fullscreen.value
+            } else {
+                frontmostWindowIsFullscreen = nil
+            }
+        } else {
+            frontmostWindowIsFullscreen = false
+        }
         return WindowInventorySnapshot(
             generation: generation,
             activeSpaceIDs: activeSpaceIDs,
             windows: windows,
             focusedWindow: focusedWindow,
-            frontmostApplicationPID: frontmostApplicationPID
+            frontmostApplicationPID: frontmostApplicationPID,
+            exceptionForegroundContext: ExceptionForegroundContext(
+                bundleIdentifier: frontmostApplication?.bundleIdentifier,
+                windowIsFullscreen: frontmostWindowIsFullscreen
+            )
         )
     }
 
     private func replace(with snapshot: WindowServerSnapshot) -> [WindowIdentity] {
         generation &+= 1
+        hasLoadedActiveSpaceInventory = true
         activeSpaceIDs = Array(Set(snapshot.activeSpaceIDs)).sorted()
         records.removeAll(keepingCapacity: true)
         mostRecentFirst.removeAll(keepingCapacity: true)

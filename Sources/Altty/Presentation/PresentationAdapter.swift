@@ -15,11 +15,18 @@ protocol PresentationAdapter: AnyObject {
 
 @MainActor
 final class AppKitPresentationAdapter: PresentationAdapter {
+    private let exceptions: any ExceptionsAdapter
     private var onCommand: ((SwitcherCommand) -> Void)?
     private var switchingErrorPanel: NSPanel?
     private lazy var menuBar = MenuBarController { [weak self] command in self?.onCommand?(command) }
-    private lazy var settings = SettingsWindowController { [weak self] command in self?.onCommand?(command) }
+    private lazy var settings = SettingsWindowController(exceptions: exceptions) {
+        [weak self] command in self?.onCommand?(command)
+    }
     private lazy var switcherPanel = SwitcherPanelController()
+
+    init(exceptions: any ExceptionsAdapter) {
+        self.exceptions = exceptions
+    }
 
     func install(onCommand: @escaping (SwitcherCommand) -> Void) {
         self.onCommand = onCommand

@@ -55,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func receive(_ event: SwitcherEvent) {
+        environment.engine.updateFrontmostApplication(
+            environment.exceptions.frontmostApplicationBundleIdentifier()
+        )
         run(environment.engine.receive(event))
         refreshPresentation()
     }
@@ -185,13 +188,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case let .persistSettings(snapshot):
                 do {
                     try environment.persistence.saveSettings(snapshot)
-                    run(environment.engine.receiveShortcutPersistence(.saved(
-                        snapshot.shortcuts
-                    )))
+                    run(environment.engine.receiveSettingsPersistence(.saved(snapshot)))
                 } catch {
-                    run(environment.engine.receiveShortcutPersistence(.failed(
-                        snapshot.shortcuts
-                    )))
+                    run(environment.engine.receiveSettingsPersistence(.failed(snapshot)))
                 }
                 refreshPresentation()
             }

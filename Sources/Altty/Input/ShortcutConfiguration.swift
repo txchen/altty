@@ -159,8 +159,3 @@ enum ShortcutRegistrationEvent: Equatable, Sendable {
     case failed(ShortcutPair, ShortcutConfigurationError)
     case recoveredWithDefaults(ShortcutConfigurationError)
 }
-
-enum ShortcutPersistenceEvent: Equatable, Sendable {
-    case saved(ShortcutPair)
-    case failed(ShortcutPair)
-}

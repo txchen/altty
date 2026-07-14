@@ -283,7 +283,9 @@ struct ShortcutConfigurationTests {
         ])
         #expect(engine.presentationState.shortcutSettings.current == .defaults)
         #expect(engine.presentationState.shortcutSettings.pending == proposedPair)
-        #expect(engine.receiveShortcutPersistence(.saved(proposedPair)) == [])
+        #expect(engine.receiveSettingsPersistence(.saved(SettingsSnapshot(
+            shortcuts: proposedPair
+        ))) == [])
         #expect(engine.presentationState.shortcutSettings.current == proposedPair)
         #expect(engine.presentationState.shortcutSettings.pending == nil)
     }
@@ -304,7 +306,9 @@ struct ShortcutConfigurationTests {
         #expect(engine.receiveShortcutRegistration(.applied(proposed)) == [
             .persistSettings(SettingsSnapshot(shortcuts: proposed)),
         ])
-        #expect(engine.receiveShortcutPersistence(.failed(proposed)) == [
+        #expect(engine.receiveSettingsPersistence(.failed(SettingsSnapshot(
+            shortcuts: proposed
+        ))) == [
             .rollbackShortcuts(.defaults),
         ])
         #expect(engine.presentationState.shortcutSettings.current == .defaults)
@@ -326,7 +330,7 @@ struct ShortcutConfigurationTests {
         #expect(engine.receiveShortcutRegistration(.recoveredWithDefaults(error)) == [
             .persistSettings(.defaults),
         ])
-        #expect(engine.receiveShortcutPersistence(.saved(.defaults)) == [])
+        #expect(engine.receiveSettingsPersistence(.saved(.defaults)) == [])
         #expect(engine.presentationState.shortcutSettings.current == .defaults)
         #expect(engine.presentationState.shortcutSettings.recoveryWarning != nil)
     }

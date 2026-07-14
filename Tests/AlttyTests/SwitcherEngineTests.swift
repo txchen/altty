@@ -401,7 +401,7 @@ struct InputSmokeTests {
         #expect(events.isEmpty)
     }
 
-    @Test func realDefaultSwitcherShortcutPairRegistrationDoesNotChangeSystemSettings() async throws {
+    @Test func realIgnoredForegroundApplicationReceivesConfiguredShortcutPair() async throws {
         guard getenv("ALTTY_RUN_SHORTCUT_SMOKE").map({ String(cString: $0) }) == "1" else { return }
         let environment = ProcessInfo.processInfo.environment
         let probeAppURL = try #require(environment["ALTTY_SHORTCUT_PROBE_APP"].map(URL.init(fileURLWithPath:)))
@@ -416,8 +416,6 @@ struct InputSmokeTests {
         input.install { _ in }
         #expect(input.setShortcutsEnabled(true) == .applied)
         #expect(input.shortcutsEnabled)
-        #expect(input.setShortcutsEnabled(false) == .applied)
-        #expect(!input.shortcutsEnabled)
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
@@ -435,6 +433,32 @@ struct InputSmokeTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(FileManager.default.fileExists(atPath: readyURL.path))
+        let ignoredProbe = try #require(ExceptionRule(
+            bundleIdentifier: "app.altty.shortcut-pass-through-probe",
+            matchType: .exact,
+            hide: false,
+            ignore: .always
+        ))
+        let engine = SwitcherEngine(exceptionRules: [ignoredProbe])
+        _ = engine.receive(.accessibilityChanged(.available))
+        _ = engine.receive(.windowServerChanged(.available))
+        let effects = await engine.receiveInventory(.workspaceChanged(.snapshot([
+            WorkspaceApplicationFacts(
+                pid: probe.processIdentifier,
+                bundleIdentifier: "app.altty.shortcut-pass-through-probe",
+                applicationName: "Altty Shortcut Pass-Through Probe",
+                bundlePath: probeAppURL.path,
+                isHidden: false,
+                isFrontmost: true
+            ),
+        ])))
+        #expect(effects == [.setShortcutsEnabled(false)])
+        for effect in effects {
+            if case let .setShortcutsEnabled(enabled) = effect {
+                #expect(input.setShortcutsEnabled(enabled) == .applied)
+            }
+        }
+        #expect(!input.shortcutsEnabled)
         var passedThroughKeyCodes: Set<UInt16> = []
         for _ in 0..<3_000 {
             let contents = (try? String(contentsOf: outputURL, encoding: .utf8)) ?? ""

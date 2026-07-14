@@ -10,7 +10,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
         static let general = Pane(title: "General", symbol: "gearshape", detail: "Altty remains available from the menu bar while required system access is unavailable.")
         static let shortcuts = Pane(title: "Shortcuts", symbol: "keyboard", detail: "Choose one shortcut per switcher. Hold Shift with either shortcut to navigate in reverse.")
-        static let exceptions = Pane(title: "Exceptions", symbol: "list.bullet.rectangle", detail: "Application exception rules will be available in a later build.")
+        static let exceptions = Pane(title: "Exceptions", symbol: "list.bullet.rectangle", detail: "Hide matching windows or pass both Altty shortcuts through to a frontmost application.")
         static let about = Pane(title: "About", symbol: "info.circle", detail: "Altty is a private, title-list window switcher for macOS 15.")
         static let all = [general, shortcuts, exceptions, about]
     }
@@ -27,6 +27,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private let sidebar = NSTableView()
     private let shortcutErrorLabel = NSTextField(wrappingLabelWithString: "")
     private let shortcutPendingLabel = NSTextField(labelWithString: "")
+    private let exceptions: any ExceptionsAdapter
+    private lazy var exceptionsController = ExceptionsSettingsViewController(
+        applications: exceptions
+    ) {
+        [weak self] rules in
+        self?.onCommand(.replaceExceptionRules(rules))
+    }
     private lazy var allWindowsRecorder = ShortcutRecorderControl(
         mode: .allWindows,
         binding: ShortcutPair.defaults.allWindows
@@ -40,7 +47,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         self?.onCommand(.updateShortcut(mode, binding))
     }
 
-    init(onCommand: @escaping (SwitcherCommand) -> Void) {
+    init(
+        exceptions: any ExceptionsAdapter,
+        onCommand: @escaping (SwitcherCommand) -> Void
+    ) {
+        self.exceptions = exceptions
         self.onCommand = onCommand
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 440),
@@ -74,6 +85,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         skyLightDetailLabel.stringValue = state.skyLightDetail
         accessibilityButton.isHidden = !state.showsAccessibilityAction
         updateShortcuts(state.shortcutSettings)
+        exceptionsController.update(state.exceptionSettings)
     }
 
     private func configureSidebar(on window: NSWindow) {
@@ -162,6 +174,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             shortcutErrorLabel.maximumNumberOfLines = 3
             stack.addArrangedSubview(shortcutPendingLabel)
             stack.addArrangedSubview(shortcutErrorLabel)
+        } else if pane == .exceptions {
+            stack.addArrangedSubview(exceptionsController.view)
         }
         stack.orientation = .vertical
         stack.alignment = .leading

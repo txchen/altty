@@ -18,21 +18,23 @@ struct AppEnvironment {
         let inventory = WindowInventory()
         let persistence = FileSettingsPersistenceAdapter()
         let settings = persistence.loadSettings()
+        let workspace = SystemWorkspaceAdapter()
         return AppEnvironment(
             engine: SwitcherEngine(
                 inventory: inventory,
                 shortcuts: settings.snapshot.shortcuts,
+                exceptionRules: settings.snapshot.exceptionRules,
                 settingsWarning: settings.warning?.message
             ),
             input: SystemInputAdapter(shortcuts: settings.snapshot.shortcuts),
             windowServer: SystemWindowServerAdapter(),
             accessibility: SystemAccessibilityAdapter(),
-            workspace: SystemWorkspaceAdapter(),
+            workspace: workspace,
             inventory: inventory,
             switching: SystemSwitchingAdapter(),
-            exceptions: DefaultExceptionsAdapter(),
+            exceptions: workspace,
             persistence: persistence,
-            presentation: AppKitPresentationAdapter(),
+            presentation: AppKitPresentationAdapter(exceptions: workspace),
             diagnostics: UnifiedLogDiagnosticsAdapter()
         )
     }
