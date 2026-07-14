@@ -17,7 +17,7 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 1. `AppDelegate` assembles the production adapters and sends `.launch` to `SwitcherEngine`.
 2. The engine requests Accessibility and WindowServer capability checks as effects.
 3. Shortcuts remain disabled until both dependencies report ready.
-4. Readiness starts the event-driven inventory: SkyLight replaces or reconciles the current-Space WID set, AX lazily enriches requested identities off-main, and Workspace owns application lifecycle/visibility facts.
+4. Readiness starts the event-driven inventory: SkyLight replaces or reconciles the Active Space WID set, AX lazily enriches requested identities off-main, and Workspace owns application lifecycle/visibility facts.
 5. Adapter callbacks become immutable inventory events. `WindowInventory` validates WID, PID and generation before updating actor-isolated records, and `SwitcherEngine` remains the observable test seam.
 6. AppKit Presentation renders immutable engine state in the menu and Settings shell.
 

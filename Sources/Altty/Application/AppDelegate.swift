@@ -125,20 +125,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func receive(_ event: WindowServerInventoryEvent) {
         switch event {
-        case .created, .destroyed:
+        case .created:
             scheduleInventoryRefresh(.reconcile)
-        case let .focused(wid, pid):
-            let identity = WindowIdentity(wid: wid, pid: pid, generation: inventoryGeneration)
+        case let .destroyed(identity):
+            Task { [weak self] in
+                guard let self else { return }
+                self.run(await self.environment.engine.receiveInventory(.destroyed(identity)))
+            }
+            scheduleInventoryRefresh(.reconcile)
+        case let .focused(identity):
             Task { [weak self] in
                 guard let self else { return }
                 self.run(await self.environment.engine.receiveInventory(.focused(identity)))
             }
-        case let .semanticsInvalidated(wid, pid):
-            scheduleSemanticInvalidation(WindowIdentity(
-                wid: wid,
-                pid: pid,
-                generation: inventoryGeneration
-            ))
+        case let .semanticsInvalidated(identity):
+            scheduleSemanticInvalidation(identity)
         case .activeSpaceChanged:
             scheduleInventoryRefresh(.replace)
         }
@@ -234,6 +235,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 : .reconcileActiveSpace(snapshot)
             self.run(await self.environment.engine.receiveInventory(event))
             self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
+            self.environment.windowServer.acceptInventorySnapshot(
+                snapshot,
+                generation: self.inventoryGeneration
+            )
         }
     }
 
