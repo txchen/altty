@@ -49,6 +49,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         environment.accessibility.releaseObservers()
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard environment.engine.presentationState.hasLaunched else { return }
+        run(environment.engine.receiveLaunchAtLoginStatus(
+            environment.launchAtLogin.status
+        ))
+        refreshPresentation()
+    }
+
     private func handle(_ command: SwitcherCommand) {
         run(environment.engine.send(command))
         refreshPresentation()

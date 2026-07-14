@@ -21,6 +21,7 @@ struct SwitcherPanelObservedRow: Equatable {
     let showsApplicationIcon: Bool
     var usesSingleLineText: Bool = true
     var accessibilityLabel: String = ""
+    var accessibilityRole: String = ""
 }
 
 struct SwitcherDisplay: Equatable {
@@ -91,8 +92,15 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
             rowCount: tableView.numberOfRows,
             selectedIdentity: state?.rows[safe: tableView.selectedRow]?.identity,
             rows: (0..<tableView.numberOfRows).compactMap { row in
-                (tableView.view(atColumn: 0, row: row, makeIfNecessary: true)
-                    as? SwitcherRowView)?.observedRow
+                guard let view = tableView.view(
+                    atColumn: 0,
+                    row: row,
+                    makeIfNecessary: true
+                ) as? SwitcherRowView else { return nil }
+                var observed = view.observedRow
+                observed.accessibilityLabel = view.accessibilityLabel() ?? ""
+                observed.accessibilityRole = view.accessibilityRole()?.rawValue ?? ""
+                return observed
             },
             displayIdentifier: displayIdentifier,
             panelFrame: panel.frame,
@@ -267,7 +275,8 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
                 showsApplicationIcon: icon.image != nil,
                 usesSingleLineText: title.maximumNumberOfLines == 1
                     && subtitle.maximumNumberOfLines == 1,
-                accessibilityLabel: accessibilityLabel
+                accessibilityLabel: accessibilityLabel,
+                accessibilityRole: NSAccessibility.Role.row.rawValue
             )
         )
         row.setAccessibilityElement(true)

@@ -1594,7 +1594,8 @@ struct SwitcherPanelTests {
                 applicationName: "example.app.10",
                 badges: ["Minimized"],
                 showsApplicationIcon: true,
-                accessibilityLabel: "First, example.app.10, Minimized"
+                accessibilityLabel: "First, example.app.10, Minimized",
+                accessibilityRole: NSAccessibility.Role.row.rawValue
             ),
             SwitcherPanelObservedRow(
                 identity: second.identity,
@@ -1602,7 +1603,8 @@ struct SwitcherPanelTests {
                 applicationName: "example.app.20",
                 badges: ["Hidden", "Full Screen"],
                 showsApplicationIcon: true,
-                accessibilityLabel: "Second, example.app.20, Hidden, Full Screen"
+                accessibilityLabel: "Second, example.app.20, Hidden, Full Screen",
+                accessibilityRole: NSAccessibility.Role.row.rawValue
             ),
         ])
         #expect(observed.displayIdentifier != nil)

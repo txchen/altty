@@ -690,6 +690,25 @@ final class SwitcherEngine {
         }
     }
 
+    func receiveLaunchAtLoginStatus(_ status: LaunchAtLoginStatus) -> [SwitcherEffect] {
+        if status == .requiresApproval {
+            return receiveLaunchAtLogin(.requiresApproval)
+        }
+        let isEnabled = status == .enabled
+        let displayed = presentationState.generalSettings.displayed
+        presentationState.generalSettings.launchAtLoginRequiresApproval = false
+        if presentationState.generalSettings.error == Self.launchAtLoginApprovalMessage {
+            presentationState.generalSettings.error = nil
+        }
+        guard displayed.launchAtLogin != isEnabled else { return [] }
+        let reconciled = GeneralSettings(
+            launchAtLogin: isEnabled,
+            listPresentation: displayed.listPresentation
+        )
+        presentationState.generalSettings.pending = reconciled
+        return [.persistSettings(settingsSnapshot(source: .current, general: reconciled))]
+    }
+
     func receiveShortcutRegistration(_ event: ShortcutRegistrationEvent) -> [SwitcherEffect] {
         switch event {
         case let .applied(pair):

@@ -119,6 +119,14 @@ struct SettingsPresentationTests {
         #expect(SystemLaunchAtLoginAdapter.mapStatus(.enabled) == .enabled)
         #expect(SystemLaunchAtLoginAdapter.mapStatus(.notRegistered) == .disabled)
         #expect(SystemLaunchAtLoginAdapter.mapStatus(.requiresApproval) == .requiresApproval)
+        #expect(SystemLaunchAtLoginAdapter.requiredOperation(
+            enabled: true,
+            status: .enabled
+        ) == .none)
+        #expect(SystemLaunchAtLoginAdapter.requiredOperation(
+            enabled: false,
+            status: .enabled
+        ) == .unregister)
         #expect(SwitcherEngine(
             launchAtLoginRequiresApproval: true
         ).presentationState.generalSettings.inlineMessage?.contains("System Settings") == true)
@@ -143,6 +151,23 @@ struct SettingsPresentationTests {
         controller.show(state: engine.presentationState)
         #expect(controller.observedState.showsLoginItemsRecovery)
         controller.close()
+
+        let reconciled = GeneralSettings(
+            launchAtLogin: true,
+            listPresentation: .defaults
+        )
+        #expect(engine.receiveLaunchAtLoginStatus(.enabled) == [
+            .persistSettings(SettingsSnapshot(
+                shortcuts: .defaults,
+                general: reconciled
+            )),
+        ])
+        #expect(engine.receiveSettingsPersistence(.saved(SettingsSnapshot(
+            shortcuts: .defaults,
+            general: reconciled
+        ))) == [])
+        #expect(engine.presentationState.generalSettings.current.launchAtLogin)
+        #expect(!engine.presentationState.generalSettings.launchAtLoginRequiresApproval)
     }
 
     @Test func panelUsesInvokingWindowDisplayFallbackAndKeepsOverflowSelectionVisible() {
@@ -208,6 +233,9 @@ struct SettingsPresentationTests {
         #expect(panel.observedState.rows.allSatisfy {
             $0.accessibilityLabel.contains($0.title)
                 && $0.accessibilityLabel.contains($0.applicationName)
+        })
+        #expect(panel.observedState.rows.allSatisfy {
+            $0.accessibilityRole == NSAccessibility.Role.row.rawValue
         })
         panel.dismiss()
     }

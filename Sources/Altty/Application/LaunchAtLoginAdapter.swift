@@ -6,6 +6,12 @@ enum LaunchAtLoginStatus: Equatable, Sendable {
     case requiresApproval
 }
 
+enum LaunchAtLoginOperation: Equatable, Sendable {
+    case none
+    case register
+    case unregister
+}
+
 @MainActor
 protocol LaunchAtLoginAdapter: AnyObject {
     var status: LaunchAtLoginStatus { get }
@@ -18,9 +24,12 @@ final class SystemLaunchAtLoginAdapter: LaunchAtLoginAdapter {
     var status: LaunchAtLoginStatus { Self.mapStatus(SMAppService.mainApp.status) }
 
     func setEnabled(_ enabled: Bool) throws -> LaunchAtLoginStatus {
-        if enabled {
+        switch Self.requiredOperation(enabled: enabled, status: status) {
+        case .none:
+            return status
+        case .register:
             try SMAppService.mainApp.register()
-        } else {
+        case .unregister:
             try SMAppService.mainApp.unregister()
         }
         return status
@@ -36,6 +45,17 @@ final class SystemLaunchAtLoginAdapter: LaunchAtLoginAdapter {
         case .requiresApproval: .requiresApproval
         case .notRegistered, .notFound: .disabled
         @unknown default: .disabled
+        }
+    }
+
+    static func requiredOperation(
+        enabled: Bool,
+        status: LaunchAtLoginStatus
+    ) -> LaunchAtLoginOperation {
+        switch (enabled, status) {
+        case (true, .enabled), (false, .disabled): .none
+        case (true, _): .register
+        case (false, _): .unregister
         }
     }
 }
