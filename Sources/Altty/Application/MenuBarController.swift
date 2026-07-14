@@ -5,6 +5,10 @@ final class MenuBarController: NSObject {
     private let onCommand: (SwitcherCommand) -> Void
     private var statusItem: NSStatusItem?
     private let readinessItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
+    private let accessibilityItem = NSMenuItem(title: "Accessibility: Checking…", action: nil, keyEquivalent: "")
+    private let skyLightItem = NSMenuItem(title: "SkyLight: Checking…", action: nil, keyEquivalent: "")
+    private let recheckItem = NSMenuItem(title: "Check Readiness", action: #selector(recheck), keyEquivalent: "")
+    private let accessibilityActionItem = NSMenuItem(title: "Grant Accessibility Permission…", action: #selector(requestAccessibility), keyEquivalent: "")
 
     init(onCommand: @escaping (SwitcherCommand) -> Void) { self.onCommand = onCommand }
 
@@ -14,9 +18,13 @@ final class MenuBarController: NSObject {
         item.button?.image?.isTemplate = true
         let menu = NSMenu()
         readinessItem.isEnabled = false
+        accessibilityItem.isEnabled = false
+        skyLightItem.isEnabled = false
         menu.addItem(readinessItem)
-        menu.addItem(NSMenuItem(title: "Check Readiness", action: #selector(recheck), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Grant Accessibility Permission…", action: #selector(requestAccessibility), keyEquivalent: ""))
+        menu.addItem(accessibilityItem)
+        menu.addItem(skyLightItem)
+        menu.addItem(recheckItem)
+        menu.addItem(accessibilityActionItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: ""))
@@ -27,7 +35,12 @@ final class MenuBarController: NSObject {
         statusItem = item
     }
 
-    func update(state: SwitcherPresentationState) { readinessItem.title = state.readinessTitle }
+    func update(state: SwitcherPresentationState) {
+        readinessItem.title = state.readinessTitle
+        accessibilityItem.title = state.accessibilityStatusTitle
+        skyLightItem.title = state.skyLightStatusTitle
+        accessibilityActionItem.isHidden = !state.showsAccessibilityAction
+    }
     @objc private func recheck() { onCommand(.recheckReadiness) }
     @objc private func openSettings() { onCommand(.openSettings) }
     @objc private func requestAccessibility() { onCommand(.requestAccessibility) }

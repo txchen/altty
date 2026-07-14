@@ -12,7 +12,7 @@ protocol PresentationAdapter: AnyObject {
 final class AppKitPresentationAdapter: PresentationAdapter {
     private var onCommand: ((SwitcherCommand) -> Void)?
     private lazy var menuBar = MenuBarController { [weak self] command in self?.onCommand?(command) }
-    private lazy var settings = SettingsWindowController { [weak self] in self?.onCommand?(.recheckReadiness) }
+    private lazy var settings = SettingsWindowController { [weak self] command in self?.onCommand?(command) }
 
     func install(onCommand: @escaping (SwitcherCommand) -> Void) {
         self.onCommand = onCommand

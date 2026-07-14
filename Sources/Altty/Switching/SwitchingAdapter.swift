@@ -1,4 +1,9 @@
 import Foundation
 
-protocol SwitchingAdapter: Sendable {}
-struct SystemSwitchingAdapter: SwitchingAdapter {}
+@MainActor
+protocol SwitchingAdapter: AnyObject { func endActiveSession() }
+
+@MainActor
+final class SystemSwitchingAdapter: SwitchingAdapter {
+    func endActiveSession() {}
+}

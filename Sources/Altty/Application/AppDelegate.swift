@@ -11,7 +11,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         environment.presentation.install { [weak self] command in self?.handle(command) }
+        environment.accessibility.startMonitoringAvailability { [weak self] availability in
+            self?.receive(.accessibilityChanged(availability))
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
         handle(.launch)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        environment.accessibility.stopMonitoringAvailability()
+        environment.accessibility.releaseObservers()
     }
 
     private func handle(_ command: SwitcherCommand) {
@@ -33,11 +48,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 receive(.windowServerChanged(environment.windowServer.availability()))
             case let .setShortcutsEnabled(enabled):
                 environment.input.setShortcutsEnabled(enabled)
+            case .endActiveSession:
+                environment.switching.endActiveSession()
+            case .releaseAccessibilityObservers:
+                environment.accessibility.releaseObservers()
+            case let .recordDiagnostic(event):
+                environment.diagnostics.record(event)
             case .presentSettings:
                 environment.presentation.presentSettings(state: environment.engine.presentationState)
             case .requestAccessibility:
                 environment.accessibility.requestPermission()
-                receive(.accessibilityChanged(environment.accessibility.availability()))
             case .openReleasesPage:
                 environment.presentation.openReleasesPage()
             case .terminate:
@@ -50,4 +70,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state = environment.engine.presentationState
         environment.presentation.update(state: state)
     }
+
+    @objc private func systemDidWake() { handle(.systemDidWake) }
 }

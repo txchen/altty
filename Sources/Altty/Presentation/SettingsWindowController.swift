@@ -14,13 +14,19 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         static let all = [general, shortcuts, exceptions, about]
     }
 
-    private let onRecheck: () -> Void
+    private let onCommand: (SwitcherCommand) -> Void
     private let statusLabel = NSTextField(labelWithString: "Starting…")
+    private let accessibilityStatusLabel = NSTextField(labelWithString: "Accessibility: Checking…")
+    private let accessibilityDetailLabel = NSTextField(wrappingLabelWithString: "Checking Accessibility permission.")
+    private let skyLightStatusLabel = NSTextField(labelWithString: "SkyLight: Checking…")
+    private let skyLightDetailLabel = NSTextField(wrappingLabelWithString: "Checking WindowServer capability.")
+    private let accessibilityButton = NSButton(title: "Grant Accessibility…", target: nil, action: #selector(requestAccessibility))
+    private let recheckButton = NSButton(title: "Check Readiness", target: nil, action: #selector(recheck))
     private let contentContainer = NSView()
     private let sidebar = NSTableView()
 
-    init(onRecheck: @escaping () -> Void) {
-        self.onRecheck = onRecheck
+    init(onCommand: @escaping (SwitcherCommand) -> Void) {
+        self.onCommand = onCommand
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 680, height: 440),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -30,6 +36,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         window.title = "Altty Settings"
         window.isReleasedWhenClosed = false
         super.init(window: window)
+        accessibilityButton.target = self
+        recheckButton.target = self
         configureSidebar(on: window)
         showPane(.general)
     }
@@ -43,7 +51,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func update(state: SwitcherPresentationState) { statusLabel.stringValue = state.readinessTitle }
+    func update(state: SwitcherPresentationState) {
+        statusLabel.stringValue = state.readinessTitle
+        accessibilityStatusLabel.stringValue = state.accessibilityStatusTitle
+        accessibilityDetailLabel.stringValue = state.accessibilityDetail
+        skyLightStatusLabel.stringValue = state.skyLightStatusTitle
+        skyLightDetailLabel.stringValue = state.skyLightDetail
+        accessibilityButton.isHidden = !state.showsAccessibilityAction
+    }
 
     private func configureSidebar(on window: NSWindow) {
         let split = NSSplitView()
@@ -101,10 +116,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         detail.textColor = .secondaryLabelColor
         let stack = NSStackView(views: [title, detail])
         if pane == .general {
-            statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+            statusLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+            accessibilityStatusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+            accessibilityDetailLabel.textColor = .secondaryLabelColor
+            skyLightStatusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+            skyLightDetailLabel.textColor = .secondaryLabelColor
             stack.addArrangedSubview(statusLabel)
-            let button = NSButton(title: "Check Readiness", target: self, action: #selector(recheck))
-            stack.addArrangedSubview(button)
+            stack.addArrangedSubview(accessibilityStatusLabel)
+            stack.addArrangedSubview(accessibilityDetailLabel)
+            stack.addArrangedSubview(accessibilityButton)
+            stack.addArrangedSubview(skyLightStatusLabel)
+            stack.addArrangedSubview(skyLightDetailLabel)
+            stack.addArrangedSubview(recheckButton)
         }
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -127,5 +150,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         ])
     }
 
-    @objc private func recheck() { onRecheck() }
+    @objc private func recheck() { onCommand(.recheckReadiness) }
+    @objc private func requestAccessibility() { onCommand(.requestAccessibility) }
 }
