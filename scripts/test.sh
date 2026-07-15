@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/.build/$(uname -m)-apple-macosx/debug"
 RUNNER_OBJECT="$ROOT_DIR/.build/AlttyTestRunner.o"
 RUNNER_BINARY="$ROOT_DIR/.build/altty-tests"
+FOCUS_PROBE_OBJECT="$ROOT_DIR/.build/ImmediateFocusSmokeProbe.o"
+FOCUS_PROBE_BINARY="$ROOT_DIR/.build/immediate-focus-smoke-probe"
 
 if [[ -d /Applications/Xcode.app/Contents/Developer/Library/Developer/Frameworks/Testing.framework ]]; then
   DEVELOPER_FRAMEWORKS=/Applications/Xcode.app/Contents/Developer/Library/Developer/Frameworks
@@ -30,7 +32,23 @@ fi
 # Command Line Tools can compile Swift Testing targets but do not include the
 # xctest host. Build through SwiftPM, then link the generated objects to the
 # Swift Testing entry point so the same tests run with either CLT or Xcode.
+ALTTY_RUN_FOCUS_SMOKE=0 \
+ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE=0 \
 swift test --enable-swift-testing
+if [[ "${ALTTY_RUN_FOCUS_SMOKE:-0}" == "1" \
+    || "${ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE:-0}" == "1" ]]; then
+  xcrun swiftc \
+    -parse-as-library \
+    -enable-testing \
+    -I "$BUILD_DIR/Modules" \
+    -c Tests/Fixtures/ImmediateFocusSmokeProbe.swift \
+    -o "$FOCUS_PROBE_OBJECT"
+  xcrun swiftc \
+    "$FOCUS_PROBE_OBJECT" \
+    "$BUILD_DIR"/Altty.build/*.swift.o \
+    -o "$FOCUS_PROBE_BINARY"
+  export ALTTY_FOCUS_SMOKE_PROBE="$FOCUS_PROBE_BINARY"
+fi
 xcrun swiftc \
   -parse-as-library \
   -F "$DEVELOPER_FRAMEWORKS" \

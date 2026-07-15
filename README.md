@@ -51,6 +51,11 @@ ALTTY_FOCUS_FIXTURE_WIDS=<origin-wid,target-wid> \
 scripts/test.sh --filter realImmediateAllWindowsShortcutFocusesTheNextWindow
 ```
 
+The script builds a dedicated AppKit probe with a real application event loop.
+Success requires Altty to receive the registered shortcut, verify the target
+PID/WID and MRU promotion, then switch back and verify restoration of the origin.
+A visible focus change without those engine postconditions is not a passing smoke.
+
 The Current-App focus smoke test changes focus. Launch a controlled fixture
 application with at least three windows on the Active Space, list the frontmost
 origin WID first, and explicitly run:

@@ -149,91 +149,6 @@ struct SwitcherEngineTests {
 }
 
 @MainActor
-private final class ImmediateSwitchSmokeCoordinator {
-    let engine: SwitcherEngine
-    private let input = SystemInputAdapter()
-    private let windowServer = SystemWindowServerAdapter()
-    private let accessibility = SystemAccessibilityAdapter()
-    private var invocationTask: Task<Void, Never>?
-    private(set) var completed = false
-
-    init(engine: SwitcherEngine) {
-        self.engine = engine
-    }
-
-    func start() {
-        input.install { [weak self] event in self?.receive(event) }
-        input.setShortcutsEnabled(true)
-    }
-
-    func stop() {
-        input.setShortcutsEnabled(false)
-    }
-
-    private func receive(_ event: ShortcutEvent) {
-        switch event {
-        case let .switcherPressed(mode, direction):
-            invocationTask = Task { [weak self] in
-                guard let self else { return }
-                self.run(await self.engine.invokeSwitch(mode: mode, direction: direction))
-            }
-        case .holdModifiersReleased:
-            let invocation = invocationTask
-            invocationTask = nil
-            Task { [weak self] in
-                await invocation?.value
-                guard let self else { return }
-                self.run(self.engine.confirmSwitch())
-            }
-        case .cancel:
-            invocationTask?.cancel()
-            invocationTask = nil
-            run(engine.receiveSession(.cancel(.shortcutInterrupted)))
-        }
-    }
-
-    private func run(_ effects: [SwitcherEffect]) {
-        for effect in effects {
-            switch effect {
-            case let .deminimizeWindow(identity):
-                Task { [weak self] in
-                    guard let self else { return }
-                    let succeeded = await self.accessibility.deminimize(identity)
-                    self.run(await self.engine.receiveSwitching(
-                        .deminimizeCompleted(identity, succeeded: succeeded)
-                    ))
-                }
-            case let .focusWindow(identity):
-                Task { [weak self] in
-                    guard let self else { return }
-                    let succeeded = await self.windowServer.focus(identity)
-                    self.run(await self.engine.receiveSwitching(
-                        .focusCompleted(identity, succeeded: succeeded)
-                    ))
-                }
-            case let .verifyFocus(identity):
-                Task { [weak self] in
-                    guard let self else { return }
-                    var observed: FocusedWindow?
-                    for _ in 0..<8 {
-                        try? await Task.sleep(for: .milliseconds(25))
-                        observed = await self.accessibility.focusedWindow()
-                        if observed == FocusedWindow(wid: identity.wid, pid: identity.pid) { break }
-                    }
-                    self.run(await self.engine.receiveSwitching(
-                        .focusPostconditionObserved(observed)
-                    ))
-                }
-            case .endActiveSession:
-                completed = true
-            default:
-                break
-            }
-        }
-    }
-}
-
-@MainActor
 struct WindowServerSmokeTests {
     @Test func realReadOnlySkyLightCapabilityCheck() {
         guard getenv("ALTTY_RUN_SKYLIGHT_SMOKE").map({ String(cString: $0) }) == "1" else { return }
@@ -262,20 +177,20 @@ struct WindowServerSmokeTests {
         }
     }
 
-    @Test func realImmediateAllWindowsShortcutFocusesTheNextWindow() async {
+    @Test func realImmediateAllWindowsShortcutFocusesTheNextWindow() throws {
         guard ProcessInfo.processInfo.environment["ALTTY_RUN_FOCUS_SMOKE"] == "1" else { return }
-        await runFocusSmoke(
+        try runFocusSmoke(
             keyCode: CGKeyCode(kVK_Tab),
             minimumWindowCount: 2,
             pressCount: 1
         )
     }
 
-    @Test func realCurrentAppShortcutSwitchesAmongWindowsOwnedByFrontmostApplication() async {
+    @Test func realCurrentAppShortcutSwitchesAmongWindowsOwnedByFrontmostApplication() throws {
         guard ProcessInfo.processInfo.environment["ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE"] == "1" else {
             return
         }
-        await runFocusSmoke(
+        try runFocusSmoke(
             keyCode: CGKeyCode(kVK_ANSI_Grave),
             minimumWindowCount: 3,
             pressCount: 2
@@ -286,107 +201,20 @@ struct WindowServerSmokeTests {
         keyCode: CGKeyCode,
         minimumWindowCount: Int,
         pressCount: Int
-    ) async {
-        guard let pidText = getenv("ALTTY_FOCUS_FIXTURE_PID").map({ String(cString: $0) }),
-              let pid = ProcessID(pidText),
-              let widText = getenv("ALTTY_FOCUS_FIXTURE_WIDS").map({ String(cString: $0) }) else {
-            Issue.record("Set ALTTY_FOCUS_FIXTURE_PID and comma-separated ALTTY_FOCUS_FIXTURE_WIDS")
-            return
-        }
-        let wids = widText.split(separator: ",").compactMap { WindowID($0) }
-        guard wids.count >= minimumWindowCount, Set(wids).count == wids.count else {
-            Issue.record("ALTTY_FOCUS_FIXTURE_WIDS must contain at least \(minimumWindowCount) distinct WIDs from one application")
+    ) throws {
+        guard let probePath = ProcessInfo.processInfo.environment["ALTTY_FOCUS_SMOKE_PROBE"] else {
+            Issue.record("ALTTY_FOCUS_SMOKE_PROBE was not built by scripts/test.sh")
             return
         }
 
-        let origin = WindowIdentity(wid: wids[0], pid: pid, generation: 1)
-        let target = WindowIdentity(wid: wids[pressCount], pid: pid, generation: 1)
-        let windowServer = SystemWindowServerAdapter()
-        let accessibility = SystemAccessibilityAdapter()
-        guard await windowServer.focus(origin) else {
-            Issue.record("Could not focus the fixture origin window")
-            return
-        }
-        var observedOrigin: FocusedWindow?
-        for _ in 0..<8 {
-            try? await Task.sleep(for: .milliseconds(25))
-            observedOrigin = await accessibility.focusedWindow()
-            if observedOrigin == FocusedWindow(wid: origin.wid, pid: origin.pid) { break }
-        }
-        guard observedOrigin == FocusedWindow(wid: origin.wid, pid: origin.pid) else {
-            Issue.record("Fixture origin did not become the verified focused window")
-            return
-        }
-
-        let inventory = WindowInventory()
-        let engine = SwitcherEngine(inventory: inventory)
-        _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
-            activeSpaceIDs: [1],
-            windows: wids.enumerated().map { index, wid in
-                WindowServerWindow(wid: wid, pid: pid, frontToBackOrder: index)
-            }
-        )))
-        let semantics = WindowSemanticPatch(
-            title: .value("Fixture"),
-            role: .value("AXWindow"),
-            subrole: .value("AXStandardWindow"),
-            isMinimized: .value(false),
-            isFullscreen: .value(false),
-            isTransient: .value(false)
-        )
-        for wid in wids {
-            _ = await engine.receiveInventory(.semanticsChanged(
-                WindowIdentity(wid: wid, pid: pid, generation: 1),
-                semantics
-            ))
-        }
-        _ = await engine.receiveInventory(.workspaceChanged(.snapshot([
-            WorkspaceApplicationFacts(
-                pid: pid,
-                bundleIdentifier: "app.altty.focus-fixture",
-                isHidden: false,
-                isFrontmost: true
-            ),
-        ])))
-        _ = await engine.receiveInventory(.focused(origin))
-
-        _ = NSApplication.shared
-        let coordinator = ImmediateSwitchSmokeCoordinator(engine: engine)
-        coordinator.start()
-        guard coordinator.engine.activeSwitchSession == nil else {
-            Issue.record("Smoke coordinator started with an active session")
-            coordinator.stop()
-            return
-        }
-
-        postKey(CGKeyCode(kVK_Option), keyDown: true, flags: .maskAlternate)
-        for _ in 0..<pressCount {
-            postKey(keyCode, keyDown: true, flags: .maskAlternate)
-            postKey(keyCode, keyDown: false, flags: .maskAlternate)
-        }
-        postKey(CGKeyCode(kVK_Option), keyDown: false, flags: [])
-        for _ in 0..<80 where !coordinator.completed {
-            try? await Task.sleep(for: .milliseconds(25))
-        }
-
-        coordinator.stop()
-        #expect(coordinator.completed)
-        #expect(await engine.inventorySnapshot().windows.first?.wid == target.wid)
-
-        #expect(await windowServer.focus(origin))
-    }
-
-    private func postKey(_ keyCode: CGKeyCode, keyDown: Bool, flags: CGEventFlags) {
-        guard let event = CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: keyCode,
-            keyDown: keyDown
-        ) else {
-            Issue.record("Could not construct a synthetic keyboard event")
-            return
-        }
-        event.flags = flags
-        event.post(tap: .cghidEventTap)
+        let probe = Process()
+        probe.executableURL = URL(fileURLWithPath: probePath)
+        probe.arguments = [String(keyCode), String(minimumWindowCount), String(pressCount)]
+        probe.environment = ProcessInfo.processInfo.environment
+        try probe.run()
+        probe.waitUntilExit()
+        #expect(probe.terminationReason == .exit)
+        #expect(probe.terminationStatus == 0)
     }
 }
 
