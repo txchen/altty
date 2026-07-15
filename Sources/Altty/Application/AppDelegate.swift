@@ -4,7 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let environment: AppEnvironment
     private var isMonitoringInventory = false
-    private var pendingInventoryRefresh: InventoryRefreshMode?
+    private var inventoryRefreshCoalescer = InventoryRefreshCoalescer()
     private var inventoryRefreshTask: Task<Void, Never>?
     private var inventoryRefreshSequence: UInt64 = 0
     private var inventoryGeneration: InventoryGeneration = 0
@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shortcutInvocationTask: Task<Void, Never>?
     private var shortcutCleanupTask: Task<Void, Never>?
     private var switcherPanelTask: Task<Void, Never>?
+    private var shortcutPerformance = ShortcutPerformanceTracker()
 
     init(environment: AppEnvironment) {
         self.environment = environment
@@ -73,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func receive(_ event: ShortcutEvent) {
         switch event {
         case let .switcherPressed(mode, direction):
+            if environment.engine.activeSwitchSession == nil { shortcutPerformance.beginIfNeeded() }
             let priorInvocation = shortcutInvocationTask
             shortcutInvocationTask = Task { [weak self] in
                 await priorInvocation?.value
@@ -93,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.refreshPresentation()
             }
         case let .cancel(reason):
+            shortcutPerformance.cancel()
             let invocation = shortcutInvocationTask
             shortcutInvocationTask = nil
             Task { [weak self] in
@@ -118,8 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for effect in effects {
             switch effect {
             case .checkAccessibility:
+                recordAdapterCall(.accessibility)
                 receive(.accessibilityChanged(environment.accessibility.availability()))
             case .checkWindowServer:
+                recordAdapterCall(.skyLight)
                 receive(.windowServerChanged(environment.windowServer.availability()))
             case let .setShortcutsEnabled(enabled):
                 setShortcutsEnabled(enabled)
@@ -159,10 +164,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
                 }
             case let .deminimizeWindow(identity):
+                recordShortcutLatency(.shortcutToFocusStart)
                 dismissSwitcherPanelForConfirmation()
                 let transactionID = environment.engine.activeSwitchSession?.transactionID
                 Task { [weak self] in
                     guard let self else { return }
+                    self.recordAdapterCall(.accessibility)
                     let succeeded = await self.environment.accessibility.deminimize(identity)
                     guard let transactionID else { return }
                     self.receive(
@@ -171,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     )
                 }
             case let .focusWindow(identity):
+                recordShortcutLatency(.shortcutToFocusStart)
                 dismissSwitcherPanelForConfirmation()
                 guard let transactionID = environment.engine.activeSwitchSession?.transactionID else {
                     break
@@ -188,6 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case let .scheduleSwitcherPanel(delayMilliseconds):
                 scheduleSwitcherPanel(delayMilliseconds: delayMilliseconds)
             case let .showSwitcherPanel(state):
+                recordShortcutLatency(.shortcutToPanelPresentation, clearStart: false)
                 environment.presentation.showSwitcherPanel(state: state)
             case let .updateSwitcherPanel(state):
                 environment.presentation.updateSwitcherPanel(state: state)
@@ -342,6 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func focusTarget(_ identity: WindowIdentity, transactionID: UInt64) {
         Task { [weak self] in
             guard let self else { return }
+            self.recordAdapterCall(.skyLight)
             let succeeded = await self.environment.windowServer.focus(identity)
             self.receive(
                 .focusCompleted(identity, succeeded: succeeded),
@@ -353,7 +363,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func recoverFailedFocus(target: WindowIdentity, origin: WindowIdentity?) {
         Task { [weak self] in
             guard let self else { return }
-            if let origin { _ = await self.environment.windowServer.focus(origin) }
+            if let origin {
+                self.recordAdapterCall(.skyLight)
+                _ = await self.environment.windowServer.focus(origin)
+            }
             try? await Task.sleep(for: .milliseconds(100))
             self.environment.engine.completeFailedFocusRecovery(target)
         }
@@ -365,6 +378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var observed: FocusedWindow?
             for _ in 0..<4 {
                 try? await Task.sleep(for: .milliseconds(25))
+                self.recordAdapterCall(.accessibility)
                 observed = await self.environment.accessibility.focusedWindow()
                 if observed == FocusedWindow(wid: identity.wid, pid: identity.pid) { break }
             }
@@ -403,7 +417,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         inventoryRefreshTask?.cancel()
         inventoryRefreshTask = nil
         inventoryRefreshSequence &+= 1
-        pendingInventoryRefresh = nil
+        inventoryRefreshCoalescer.reset()
         semanticInvalidationTasks.values.forEach { $0.cancel() }
         semanticInvalidationTasks.removeAll()
         environment.windowServer.stopMonitoringInventory()
@@ -500,9 +514,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func scheduleInventoryRefresh(_ mode: InventoryRefreshMode) {
         guard isMonitoringInventory else { return }
-        if mode == .replace || pendingInventoryRefresh == nil {
-            pendingInventoryRefresh = mode
-        }
+        inventoryRefreshCoalescer.request(mode)
         inventoryRefreshSequence &+= 1
         let sequence = inventoryRefreshSequence
         inventoryRefreshTask?.cancel()
@@ -513,8 +525,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             guard let self, self.isMonitoringInventory,
-                  let mode = self.pendingInventoryRefresh else { return }
-            self.pendingInventoryRefresh = nil
+                  let mode = self.inventoryRefreshCoalescer.takePending() else { return }
+            self.recordAdapterCall(.skyLight)
             let snapshot = await self.environment.windowServer.activeSpaceSnapshot()
             guard !Task.isCancelled, self.isMonitoringInventory,
                   sequence == self.inventoryRefreshSequence else { return }
@@ -540,6 +552,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshPresentation() {
         let state = environment.engine.presentationState
         environment.presentation.update(state: state)
+    }
+
+    private func recordAdapterCall(_ adapter: PerformanceAdapter) {
+        environment.diagnostics.recordPerformance(.adapterCall(adapter))
+    }
+
+    private func recordShortcutLatency(
+        _ metric: PerformanceMetric,
+        clearStart: Bool = true
+    ) {
+        guard let nanoseconds = shortcutPerformance.latency(clearStart: clearStart) else { return }
+        environment.diagnostics.recordPerformance(.latency(metric, nanoseconds: nanoseconds))
     }
 
     @objc private func systemDidWake() { handle(.systemDidWake) }
