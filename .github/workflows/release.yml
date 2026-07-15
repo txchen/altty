@@ -94,18 +94,7 @@ jobs:
           python3 -m http.server 8765 --bind 127.0.0.1 --directory .build/artifacts > "$RUNNER_TEMP/cask-server.log" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID"' EXIT
-          brew install --cask "$RUNNER_TEMP/altty-local.rb"
-          test -d /Applications/Altty.app
-          mkdir -p "$HOME/Library/Application Support/app.altty.macos" "$HOME/Library/Caches/app.altty.macos" "$HOME/Library/Logs/app.altty.macos"
-          touch "$HOME/Library/Application Support/app.altty.macos/settings.json"
-          brew uninstall --cask altty
-          test -e "$HOME/Library/Application Support/app.altty.macos/settings.json"
-          brew install --cask "$RUNNER_TEMP/altty-local.rb"
-          brew uninstall --zap --cask altty
-          test ! -e "$HOME/Library/Application Support/app.altty.macos"
-          test ! -e "$HOME/Library/Caches/app.altty.macos"
-          test ! -e "$HOME/Library/Logs/app.altty.macos"
-          ! grep -q 'TCC' "$RUNNER_TEMP/altty-local.rb"
+          scripts/test-cask-lifecycle.sh "$RUNNER_TEMP/altty-local.rb"
       - name: Preflight the project tap update
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

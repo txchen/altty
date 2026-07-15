@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-VERSION="${1:?usage: render-cask.sh VERSION SHA256 [REPOSITORY]}"
+VERSION="${1:?usage: render-cask.sh VERSION SHA256 [REPOSITORY] [URL]}"
 SHA256="${2:?missing SHA-256}"
 REPOSITORY="${3:-altty/altty}"
 URL="${4:-https://github.com/$REPOSITORY/releases/download/$VERSION/Altty-#{version}-arm64.zip}"
