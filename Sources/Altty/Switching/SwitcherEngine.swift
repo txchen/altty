@@ -248,6 +248,7 @@ enum SwitcherSessionPhase: Equatable, Sendable {
 }
 
 struct SwitcherSession: Equatable, Sendable {
+    let transactionID: UInt64
     let mode: SwitcherMode
     let shortcutDescription: String
     let invocationPID: ProcessID?
@@ -289,7 +290,6 @@ enum SwitchingEvent: Equatable, Sendable {
     case deminimizeCompleted(WindowIdentity, succeeded: Bool)
     case focusCompleted(WindowIdentity, succeeded: Bool)
     case focusPostconditionObserved(FocusedWindow?)
-    case failedFocusRecoveryCompleted(WindowIdentity)
 }
 
 /// The application-service seam. It owns only value state and requested effects;
@@ -302,7 +302,8 @@ final class SwitcherEngine {
     private var exceptionPolicy: ExceptionPolicy
     private var exceptionShortcutsEnabled: Bool? = true
     private var exceptionForegroundContext = ExceptionForegroundContext.unknown
-    private var suppressedFocusPromotions: Set<WindowIdentity> = []
+    private var suppressedFocusPromotions: [WindowIdentity: Int] = [:]
+    private var nextFocusTransactionID: UInt64 = 1
     private(set) var activeSwitchSession: SwitcherSession?
 
     private(set) var presentationState = SwitcherPresentationState(
@@ -365,7 +366,7 @@ final class SwitcherEngine {
         _ event: InventoryEvent
     ) async -> [SwitcherEffect] {
         if case let .focused(identity) = event {
-            if suppressedFocusPromotions.contains(identity) { return [] }
+            if suppressedFocusPromotions[identity, default: 0] > 0 { return [] }
             if let session = activeSwitchSession,
                identity == session.target.identity,
                session.phase != .waitingForModifierRelease {
@@ -472,6 +473,7 @@ final class SwitcherEngine {
             selectedIndex = direction == .forward ? 0 : candidates.count - 1
         }
         activeSwitchSession = SwitcherSession(
+            transactionID: nextFocusTransactionID,
             mode: mode,
             shortcutDescription: presentationState.shortcutSettings.current
                 .binding(for: mode).displayName,
@@ -483,6 +485,7 @@ final class SwitcherEngine {
             panelPresentationDeadlineMilliseconds: clock.nowMilliseconds + 125,
             listPresentation: presentationState.generalSettings.current.listPresentation
         )
+        nextFocusTransactionID &+= 1
 
         if candidates.count == 1 { return confirmSwitch() }
         return [.scheduleSwitcherPanel(delayMilliseconds: 125)]
@@ -555,11 +558,7 @@ final class SwitcherEngine {
             : [.focusWindow(session.target.identity)]
     }
 
-    func receiveSwitching(_ event: SwitchingEvent) async -> [SwitcherEffect] {
-        if case let .failedFocusRecoveryCompleted(identity) = event {
-            suppressedFocusPromotions.remove(identity)
-            return []
-        }
+    private func receiveSwitching(_ event: SwitchingEvent) async -> [SwitcherEffect] {
         guard var session = activeSwitchSession else { return [] }
         switch event {
         case let .deminimizeCompleted(identity, succeeded):
@@ -584,13 +583,24 @@ final class SwitcherEngine {
             ) else { return failActiveSwitch(session) }
             _ = await inventory.apply(.focused(session.target.identity))
             return endSessionEffects()
-        case .failedFocusRecoveryCompleted:
-            return []
         }
     }
 
+    func receiveSwitching(
+        _ event: SwitchingEvent,
+        transactionID: UInt64
+    ) async -> [SwitcherEffect] {
+        guard activeSwitchSession?.transactionID == transactionID else { return [] }
+        return await receiveSwitching(event)
+    }
+
+    func completeFailedFocusRecovery(_ identity: WindowIdentity) {
+        let remaining = suppressedFocusPromotions[identity, default: 0] - 1
+        suppressedFocusPromotions[identity] = remaining > 0 ? remaining : nil
+    }
+
     private func failActiveSwitch(_ session: SwitcherSession) -> [SwitcherEffect] {
-        suppressedFocusPromotions.insert(session.target.identity)
+        suppressedFocusPromotions[session.target.identity, default: 0] += 1
         let origin = session.origin == session.target.identity ? nil : session.origin
         return endSessionEffects(additional: [
             .recoverFailedFocus(target: session.target.identity, origin: origin),

@@ -345,9 +345,11 @@ private enum AXWindowReader {
     private static func windowElement(for identity: WindowIdentity) -> AXUIElement? {
         let application = AXUIElementCreateApplication(identity.pid)
         AXUIElementSetMessagingTimeout(application, 0.25)
-        return windowElements(application: application).first(where: {
+        let window = windowElements(application: application).first(where: {
             windowID($0.element) == identity.wid
         })?.element
+        if let window { AXUIElementSetMessagingTimeout(window, 0.25) }
+        return window
     }
 
     static func windowElements(pid: ProcessID) -> [AXElementBox] {
@@ -358,6 +360,7 @@ private enum AXWindowReader {
 
     static func windowID(_ element: AXUIElement) -> WindowID? {
         guard let copyWindowID else { return nil }
+        AXUIElementSetMessagingTimeout(element, 0.25)
         var wid: WindowID = 0
         return copyWindowID(element, &wid) == .success && wid != 0 ? wid : nil
     }

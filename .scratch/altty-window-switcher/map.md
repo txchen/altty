@@ -23,6 +23,8 @@ The specification must settle user behavior, window discovery and focus semantic
 
 <!-- Closed-ticket pointers are appended here. -->
 
+- [Harden lifecycle, failures and event races](issues/19-harden-lifecycle-failures-and-event-races.md) — Correlate asynchronous focus work with monotonic transaction identities, reference-count failed-target suppression, fail readiness closed on Active Space query failure and bound AX window messaging; the deterministic suite covers the hostile lifecycle matrix.
+
 - [Research AltTab window model](issues/01-research-alttab-window-model.md) — Use a cached WID inventory and global MRU split across isolated WindowServer/SkyLight and AX adapters; omit capture and windowless placeholders, and filter Current-App mode by invocation PID. Later architecture scope limits candidates to the active Space.
 - [Research platform and distribution constraints](issues/02-research-platform-and-distribution-constraints.md) — Ship a non-sandboxed, hardened and notarized app via versioned ZIP and Homebrew Cask; gate AX/event-tap work on Accessibility, isolate SkyLight behind capability checks, and validate it under the final signed identity. Later release scope is arm64-only.
 - [Define switcher interaction contract](issues/03-define-switcher-interaction-contract.md) — Use window-only stable sessions over one global MRU, immediate quick switching with delayed list display, non-focusing navigation, verified focus before MRU promotion, and explicit cancellation/failure behavior.

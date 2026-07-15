@@ -47,6 +47,7 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 - A session remains active while any configured Option, Control or Command modifier is held. Shortcut edits remain pending until that session ends, then atomically replace and persist the pair.
 - Session rows remain stable under ordinary inventory changes and new windows. Destroyed candidates are removed, with selection advancing safely, and generation changes fail closed.
 - A different mode shortcut cancels an unconfirmed session; once exact-WID confirmation begins, that transaction finishes before a later shortcut press can start a fresh session and snapshot. Modes never transition in place.
+- Every confirmation has a monotonic transaction identity. Asynchronous deminimize, focus and postcondition callbacks must match it, so delayed results from a prior attempt cannot advance or fail a newer attempt for the same window identity.
 - No thumbnails or live focus previews are supported by design.
 
 ## Shortcut Settings

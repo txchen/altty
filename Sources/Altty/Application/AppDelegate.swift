@@ -103,10 +103,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func receive(_ event: SwitchingEvent) {
+    private func receive(_ event: SwitchingEvent, transactionID: UInt64) {
         Task { [weak self] in
             guard let self else { return }
-            self.run(await self.environment.engine.receiveSwitching(event))
+            self.run(await self.environment.engine.receiveSwitching(
+                event,
+                transactionID: transactionID
+            ))
             self.refreshPresentation()
         }
     }
@@ -157,16 +160,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             case let .deminimizeWindow(identity):
                 dismissSwitcherPanelForConfirmation()
+                let transactionID = environment.engine.activeSwitchSession?.transactionID
                 Task { [weak self] in
                     guard let self else { return }
                     let succeeded = await self.environment.accessibility.deminimize(identity)
-                    self.receive(.deminimizeCompleted(identity, succeeded: succeeded))
+                    guard let transactionID else { return }
+                    self.receive(
+                        .deminimizeCompleted(identity, succeeded: succeeded),
+                        transactionID: transactionID
+                    )
                 }
             case let .focusWindow(identity):
                 dismissSwitcherPanelForConfirmation()
-                focusTarget(identity)
+                guard let transactionID = environment.engine.activeSwitchSession?.transactionID else {
+                    break
+                }
+                focusTarget(identity, transactionID: transactionID)
             case let .verifyFocus(identity):
-                verifyFocus(identity)
+                guard let transactionID = environment.engine.activeSwitchSession?.transactionID else {
+                    break
+                }
+                verifyFocus(identity, transactionID: transactionID)
             case let .recoverFailedFocus(target, origin):
                 recoverFailedFocus(target: target, origin: origin)
             case let .presentSwitchingError(error):
@@ -325,11 +339,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         environment.presentation.dismissSwitcherPanel()
     }
 
-    private func focusTarget(_ identity: WindowIdentity) {
+    private func focusTarget(_ identity: WindowIdentity, transactionID: UInt64) {
         Task { [weak self] in
             guard let self else { return }
             let succeeded = await self.environment.windowServer.focus(identity)
-            self.receive(.focusCompleted(identity, succeeded: succeeded))
+            self.receive(
+                .focusCompleted(identity, succeeded: succeeded),
+                transactionID: transactionID
+            )
         }
     }
 
@@ -338,11 +355,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             if let origin { _ = await self.environment.windowServer.focus(origin) }
             try? await Task.sleep(for: .milliseconds(100))
-            self.receive(.failedFocusRecoveryCompleted(target))
+            self.environment.engine.completeFailedFocusRecovery(target)
         }
     }
 
-    private func verifyFocus(_ identity: WindowIdentity) {
+    private func verifyFocus(_ identity: WindowIdentity, transactionID: UInt64) {
         Task { [weak self] in
             guard let self else { return }
             var observed: FocusedWindow?
@@ -351,7 +368,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 observed = await self.environment.accessibility.focusedWindow()
                 if observed == FocusedWindow(wid: identity.wid, pid: identity.pid) { break }
             }
-            self.receive(.focusPostconditionObserved(observed))
+            self.receive(
+                .focusPostconditionObserved(observed),
+                transactionID: transactionID
+            )
         }
     }
 
@@ -495,9 +515,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, self.isMonitoringInventory,
                   let mode = self.pendingInventoryRefresh else { return }
             self.pendingInventoryRefresh = nil
-            guard let snapshot = await self.environment.windowServer.activeSpaceSnapshot() else { return }
+            let snapshot = await self.environment.windowServer.activeSpaceSnapshot()
             guard !Task.isCancelled, self.isMonitoringInventory,
                   sequence == self.inventoryRefreshSequence else { return }
+            guard let snapshot else {
+                self.receive(.windowServerChanged(.unavailable))
+                return
+            }
             let event: InventoryEvent = mode == .replace
                 ? .replaceActiveSpace(snapshot)
                 : .reconcileActiveSpace(snapshot)

@@ -6,6 +6,19 @@ import CoreGraphics
 @testable import Altty
 
 @MainActor
+private extension SwitcherEngine {
+    func receiveCurrentSwitching(
+        _ event: SwitchingEvent,
+        transactionID: UInt64? = nil
+    ) async -> [SwitcherEffect] {
+        guard let transactionID = transactionID ?? activeSwitchSession?.transactionID else {
+            return []
+        }
+        return await receiveSwitching(event, transactionID: transactionID)
+    }
+}
+
+@MainActor
 struct SwitcherEngineTests {
     @Test func launchStartsUnavailableUntilBothDependenciesAreReady() {
         let engine = SwitcherEngine()
@@ -82,6 +95,35 @@ struct SwitcherEngineTests {
             .recordDiagnostic(.accessibilityUnavailable),
         ])
         #expect(!engine.presentationState.isReady)
+    }
+
+    @Test func diagnosticTraceCannotCarryWindowContent() async {
+        let engine = SwitcherEngine()
+        _ = await engine.receiveInventory(.replaceActiveSpace(WindowServerSnapshot(
+            activeSpaceIDs: [1],
+            windows: [WindowServerWindow(wid: 1, pid: 10, frontToBackOrder: 0)]
+        )))
+        let identity = WindowIdentity(wid: 1, pid: 10, generation: 1)
+        let privateContent = "trace-private-content-sentinel"
+        _ = await engine.receiveInventory(.semanticsChanged(
+            identity,
+            WindowSemanticPatch(
+                title: .value(privateContent),
+                role: .value("AXWindow"),
+                subrole: .value("AXStandardWindow"),
+                isMinimized: .value(false),
+                isFullscreen: .value(false),
+                isTransient: .value(false)
+            )
+        ))
+
+        let diagnostics = engine.receive(.accessibilityChanged(.unavailable)).compactMap {
+            effect -> DiagnosticEvent? in
+            guard case let .recordDiagnostic(event) = effect else { return nil }
+            return event
+        }
+        #expect(diagnostics == [.accessibilityUnavailable])
+        #expect(!diagnostics.map(String.init(reflecting:)).joined().contains(privateContent))
     }
 
     @Test func skyLightFailureRetriesOnlyForWakeOrUserRecheck() {
@@ -831,16 +873,16 @@ struct AllWindowsSwitcherSessionTests {
             .scheduleSwitcherPanel(delayMilliseconds: 125),
         ])
         #expect(engine.confirmSwitch() == [.deminimizeWindow(target)])
-        #expect(await engine.receiveSwitching(.deminimizeCompleted(target, succeeded: true)) == [
+        #expect(await engine.receiveCurrentSwitching(.deminimizeCompleted(target, succeeded: true)) == [
             .focusWindow(target),
         ])
-        #expect(await engine.receiveSwitching(.focusCompleted(target, succeeded: true)) == [
+        #expect(await engine.receiveCurrentSwitching(.focusCompleted(target, succeeded: true)) == [
             .verifyFocus(target),
         ])
         _ = await engine.receiveInventory(.focused(target))
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10, 20])
 
-        #expect(await engine.receiveSwitching(.focusPostconditionObserved(
+        #expect(await engine.receiveCurrentSwitching(.focusPostconditionObserved(
             FocusedWindow(wid: 20, pid: 200)
         )) == [.endActiveSession])
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [20, 10])
@@ -865,10 +907,10 @@ struct AllWindowsSwitcherSessionTests {
 
         _ = await engine.beginAllWindowsSwitch()
         #expect(engine.confirmSwitch() == [.focusWindow(target)])
-        #expect(await engine.receiveSwitching(.focusCompleted(target, succeeded: true)) == [
+        #expect(await engine.receiveCurrentSwitching(.focusCompleted(target, succeeded: true)) == [
             .verifyFocus(target),
         ])
-        #expect(await engine.receiveSwitching(.focusPostconditionObserved(
+        #expect(await engine.receiveCurrentSwitching(.focusPostconditionObserved(
             FocusedWindow(wid: origin.wid, pid: origin.pid)
         )) == [
             .endActiveSession,
@@ -878,10 +920,10 @@ struct AllWindowsSwitcherSessionTests {
         #expect(engine.activeSwitchSession == nil)
         _ = await engine.receiveInventory(.focused(target))
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10, 20])
-        _ = await engine.receiveSwitching(.failedFocusRecoveryCompleted(target))
+        engine.completeFailedFocusRecovery(target)
         _ = await engine.receiveInventory(.focused(target))
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [20, 10])
-        #expect(await engine.receiveSwitching(.focusPostconditionObserved(
+        #expect(await engine.receiveCurrentSwitching(.focusPostconditionObserved(
             FocusedWindow(wid: target.wid, pid: target.pid)
         )) == [])
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [20, 10])
@@ -910,10 +952,60 @@ struct AllWindowsSwitcherSessionTests {
             .recoverFailedFocus(target: target, origin: origin),
             .presentSwitchingError(.unableToSwitch),
         ])
-        #expect(await engine.receiveSwitching(.focusCompleted(target, succeeded: false)) == [])
+        #expect(await engine.receiveCurrentSwitching(.focusCompleted(target, succeeded: false)) == [])
         _ = await engine.receiveInventory(.focused(target))
         #expect(engine.activeSwitchSession == nil)
         #expect(await engine.inventorySnapshot().windows.map(\.wid) == [10])
+    }
+
+    @Test func titleFreeTraceRejectsLateCompletionAndFinishesTheNewerTransaction() async throws {
+        let (engine, identities) = await makeInteractiveEngine()
+        let target = identities[1]
+
+        _ = await engine.beginAllWindowsSwitch()
+        _ = engine.confirmSwitch()
+        let firstTransaction = try #require(engine.activeSwitchSession?.transactionID)
+        _ = await engine.receiveInventory(.destroyed(target))
+
+        _ = await engine.receiveInventory(.created(
+            WindowServerWindow(wid: target.wid, pid: target.pid, frontToBackOrder: 1),
+            generation: target.generation
+        ))
+        _ = await engine.receiveInventory(.semanticsChanged(
+            target,
+            WindowSemanticPatch(
+                role: .value("AXWindow"),
+                subrole: .value("AXStandardWindow"),
+                isMinimized: .value(false),
+                isFullscreen: .value(false),
+                isTransient: .value(false)
+            )
+        ))
+        _ = await engine.beginAllWindowsSwitch()
+        _ = engine.receiveSession(.select(target))
+        _ = engine.confirmSwitch()
+        let secondTransaction = try #require(engine.activeSwitchSession?.transactionID)
+        let mruBeforeLateEvent = await engine.inventorySnapshot().windows.map(\.identity)
+        #expect(secondTransaction != firstTransaction)
+
+        #expect(await engine.receiveCurrentSwitching(
+            .focusCompleted(target, succeeded: false),
+            transactionID: firstTransaction
+        ) == [])
+        #expect(engine.activeSwitchSession?.transactionID == secondTransaction)
+        #expect(engine.activeSwitchSession?.phase == .focusing)
+        #expect(await engine.inventorySnapshot().windows.map(\.identity) == mruBeforeLateEvent)
+
+        #expect(await engine.receiveCurrentSwitching(
+            .focusCompleted(target, succeeded: true),
+            transactionID: secondTransaction
+        ) == [.verifyFocus(target)])
+        #expect(await engine.receiveCurrentSwitching(
+            .focusPostconditionObserved(FocusedWindow(wid: target.wid, pid: target.pid)),
+            transactionID: secondTransaction
+        ) == [.endActiveSession])
+        #expect(engine.activeSwitchSession == nil)
+        #expect(await engine.inventorySnapshot().windows.first?.identity == target)
     }
 
     @Test func targetClosureDuringDeminimizeFailsBeforeSkyLightFocus() async {
@@ -937,7 +1029,7 @@ struct AllWindowsSwitcherSessionTests {
 
         _ = await engine.beginAllWindowsSwitch()
         #expect(engine.confirmSwitch() == [.deminimizeWindow(target)])
-        #expect(await engine.receiveSwitching(.deminimizeCompleted(target, succeeded: false)) == [
+        #expect(await engine.receiveCurrentSwitching(.deminimizeCompleted(target, succeeded: false)) == [
             .endActiveSession,
             .recoverFailedFocus(target: target, origin: origin),
             .presentSwitchingError(.unableToSwitch),
@@ -1182,10 +1274,10 @@ struct CurrentAppSwitcherSessionTests {
         ])
         #expect(engine.activeSwitchSession?.target.identity == identities[2])
         #expect(engine.confirmSwitch() == [.focusWindow(identities[2])])
-        #expect(await engine.receiveSwitching(
+        #expect(await engine.receiveCurrentSwitching(
             .focusCompleted(identities[2], succeeded: true)
         ) == [.verifyFocus(identities[2])])
-        #expect(await engine.receiveSwitching(.focusPostconditionObserved(FocusedWindow(
+        #expect(await engine.receiveCurrentSwitching(.focusPostconditionObserved(FocusedWindow(
             wid: identities[2].wid,
             pid: identities[2].pid
         ))) == [.endActiveSession])
@@ -1296,10 +1388,10 @@ struct CurrentAppSwitcherSessionTests {
         #expect(await engine.invokeSwitch(mode: .currentApp, direction: .forward) == [])
         #expect(engine.activeSwitchSession?.mode == .allWindows)
         #expect(engine.activeSwitchSession?.phase == .focusing)
-        #expect(await engine.receiveSwitching(
+        #expect(await engine.receiveCurrentSwitching(
             .focusCompleted(identities[1], succeeded: true)
         ) == [.verifyFocus(identities[1])])
-        #expect(await engine.receiveSwitching(.focusPostconditionObserved(FocusedWindow(
+        #expect(await engine.receiveCurrentSwitching(.focusPostconditionObserved(FocusedWindow(
             wid: identities[1].wid,
             pid: identities[1].pid
         ))) == [.endActiveSession])
