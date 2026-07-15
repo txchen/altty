@@ -2,10 +2,23 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_DIR="$ROOT_DIR/.build/Altty.app"
+APP_DIR="${ALTTY_APP_DIR:-$ROOT_DIR/.build/Altty.app}"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+VERSION="${ALTTY_VERSION:-0.0.0-dev}"
+BUILD_VERSION="${ALTTY_BUILD_VERSION:-0}"
+SIGNING_IDENTITY="${ALTTY_SIGNING_IDENTITY:--}"
+BUNDLE_IDENTIFIER="${ALTTY_BUNDLE_IDENTIFIER:-app.altty.macos.dev}"
+
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$VERSION" != "0.0.0-dev" ]]; then
+  echo "Invalid ALTTY_VERSION: $VERSION" >&2
+  exit 1
+fi
+if [[ ! "$BUILD_VERSION" =~ ^[0-9]+$ ]]; then
+  echo "ALTTY_BUILD_VERSION must be a non-negative integer" >&2
+  exit 1
+fi
 
 cd "$ROOT_DIR"
 swift build -c release --arch arm64
@@ -14,9 +27,19 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$ROOT_DIR/.build/arm64-apple-macosx/release/Altty" "$MACOS_DIR/Altty"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_VERSION" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_IDENTIFIER" "$CONTENTS_DIR/Info.plist"
 
-if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "$APP_DIR" >/dev/null
+sign_args=(--force --sign "$SIGNING_IDENTITY" --options runtime)
+if [[ "$SIGNING_IDENTITY" == "-" ]]; then
+  sign_args+=(--timestamp=none)
+else
+  sign_args+=(--timestamp)
 fi
+while IFS= read -r -d '' nested_code; do
+  codesign "${sign_args[@]}" "$nested_code"
+done < <(find "$CONTENTS_DIR" -depth \( -name '*.framework' -o -name '*.dylib' -o -name '*.xpc' -o -name '*.appex' \) -print0)
+codesign "${sign_args[@]}" --entitlements "$ROOT_DIR/Resources/Release.entitlements" "$APP_DIR"
 
 echo "$APP_DIR"

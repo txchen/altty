@@ -36,6 +36,7 @@ The specification must settle user behavior, window discovery and focus semantic
 - [Switch immediately with the All-Windows shortcut](issues/13-switch-immediately-with-all-windows-shortcut.md) — Quick Option-Tab snapshots cached Active-Space MRU candidates, confirms through verified SkyLight WID focus without panel flash, promotes only after the exact PID/WID postcondition, and is covered by a real-AppKit focus smoke that restores the origin through the same product path.
 - [Add the Current-App Switcher](issues/15-add-current-app-switcher.md) — Register Option-Grave alongside Option-Tab and run both modes through the shared session engine, with Current-App filtering the global MRU by an invocation-snapshotted frontmost PID and deterministic cross-mode interruption.
 - [Configure shortcuts atomically](issues/16-configure-shortcuts-atomically.md) — Provide one validated binding per mode, atomically replace the full Carbon registration pair with rollback on conflicts, defer edits across active sessions, and persist versioned shortcut settings with safe recovery.
+- [Build reproducible arm64 release automation](issues/21-build-reproducible-arm64-release-automation.md) — Share deterministic arm64 package inspection between secret-free dry runs and an approval-gated Developer ID/notarization workflow, publish immutable build-SHA-linked ZIP metadata, and update the project Homebrew tap through a lifecycle-tested Cask PR.
 
 ## Not yet specified
 

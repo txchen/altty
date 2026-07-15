@@ -15,9 +15,33 @@ The app bundle is created at:
 .build/Altty.app
 ```
 
-The build script produces an arm64 application at `.build/Altty.app`.
+The build script produces an arm64 development application with the distinct
+`app.altty.macos.dev` identity at `.build/Altty.app`.
 `scripts/test.sh` runs the public `SwitcherEngine` tests on both Command Line
 Tools-only and full-Xcode installations.
+
+## Release dry run
+
+Release packaging can be exercised without Apple or GitHub credentials:
+
+```sh
+scripts/package-release.sh 1.2.3 42
+```
+
+This creates `Altty-1.2.3-arm64.zip`, `checksums.txt`, and
+`release-metadata.json` under `.build/artifacts`. The package is rejected unless
+it is arm64-only, targets macOS 15, uses `app.altty.macos`, carries the supplied
+versions, has hardened runtime enabled, contains no forbidden entitlements, and
+passes strict signature and content inspection. Delete the output directory
+before deliberately rebuilding the same version; release artifacts are never
+overwritten.
+
+Pushing a `MAJOR.MINOR.PATCH` tag runs the approval-gated `production-release`
+job. That job imports a Developer ID Application certificate into an ephemeral
+keychain, notarizes and staples the app, rebuilds and re-verifies the final ZIP,
+then publishes the immutable GitHub Release and opens a project tap Cask PR.
+The repository environment must supply the Apple credentials documented by the
+workflow plus `HOMEBREW_TAP_TOKEN` and `HOMEBREW_TAP_REPOSITORY`.
 
 The normal test run never changes focus. Explicitly exercise the real,
 read-only SkyLight capability check after a macOS update with:

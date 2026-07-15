@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: MAJOR.MINOR.PATCH version for a secret-free dry run
+        required: true
+        default: 0.1.0
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, package, and inspect
+        run: scripts/package-release.sh '${{ inputs.version }}' '${{ github.run_number }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-dry-run
+          path: |
+            .build/artifacts/*.zip
+            .build/artifacts/checksums.txt
+            .build/artifacts/release-metadata.json
+
+  release:
+    if: github.event_name == 'push'
+    runs-on: macos-15
+    environment: production-release
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ github.ref_name }}
+      BUILD_VERSION: ${{ github.run_number }}
+      SIGNING_IDENTITY: "Developer ID Application: ${{ secrets.APPLE_DEVELOPER_ID_NAME }} (${{ secrets.APPLE_TEAM_ID }})"
+      ARTIFACT: Altty-${{ github.ref_name }}-arm64.zip
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject an existing release or asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists" >&2
+            exit 1
+          fi
+      - name: Import signing identity into an ephemeral keychain
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/altty-signing.keychain-db"
+          CERTIFICATE="$RUNNER_TEMP/developer-id.p12"
+          echo "$CERTIFICATE_P12_BASE64" | base64 --decode > "$CERTIFICATE"
+          security create-keychain -p "$RUNNER_TEMP" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$RUNNER_TEMP" "$KEYCHAIN"
+          security import "$CERTIFICATE" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$RUNNER_TEMP" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN"
+      - name: Build and verify the signed package
+        env:
+          ALTTY_SIGNING_IDENTITY: ${{ env.SIGNING_IDENTITY }}
+        run: scripts/package-release.sh "$VERSION" "$BUILD_VERSION"
+      - name: Notarize, staple, and rebuild the exact published ZIP
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          KEY_FILE="$RUNNER_TEMP/AuthKey_$APP_STORE_CONNECT_KEY_ID.p8"
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$KEY_FILE"
+          xcrun notarytool submit ".build/artifacts/$ARTIFACT" --key "$KEY_FILE" --key-id "$APP_STORE_CONNECT_KEY_ID" --issuer "$APP_STORE_CONNECT_ISSUER_ID" --wait
+          xcrun stapler staple .build/release-work/Altty.app
+          rm ".build/artifacts/$ARTIFACT"
+          ditto -c -k --keepParent .build/release-work/Altty.app ".build/artifacts/$ARTIFACT"
+          scripts/verify-release.sh ".build/artifacts/$ARTIFACT" "$VERSION" "$BUILD_VERSION" --distribution
+          SHA256="$(shasum -a 256 ".build/artifacts/$ARTIFACT" | awk '{print $1}')"
+          printf '%s  %s\n' "$SHA256" "$ARTIFACT" > .build/artifacts/checksums.txt
+          printf '{"version":"%s","build_version":"%s","artifact":"%s","sha256":"%s","git_sha":"%s"}\n' "$VERSION" "$BUILD_VERSION" "$ARTIFACT" "$SHA256" "$GITHUB_SHA" > .build/artifacts/release-metadata.json
+      - name: Validate generated Cask before publication
+        run: |
+          SHA256="$(awk '{print $1}' .build/artifacts/checksums.txt)"
+          scripts/render-cask.sh "$VERSION" "$SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/altty.rb"
+          ruby -c "$RUNNER_TEMP/altty.rb"
+          brew audit --cask --new "$RUNNER_TEMP/altty.rb"
+      - name: Publish immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" --verify-tag --title "Altty $VERSION" --generate-notes \
+            ".build/artifacts/$ARTIFACT" \
+            .build/artifacts/checksums.txt \
+            .build/artifacts/release-metadata.json
+      - name: Open project tap update PR
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
+        run: |
+          test -n "$TAP_REPOSITORY"
+          gh repo clone "$TAP_REPOSITORY" "$RUNNER_TEMP/homebrew-tap"
+          cd "$RUNNER_TEMP/homebrew-tap"
+          git checkout -b "altty-$VERSION"
+          SHA256="$(awk '{print $1}' "$GITHUB_WORKSPACE/.build/artifacts/checksums.txt")"
+          "$GITHUB_WORKSPACE/scripts/render-cask.sh" "$VERSION" "$SHA256" "$GITHUB_REPOSITORY" > Casks/altty.rb
+          test "$(git diff --name-only)" = "Casks/altty.rb"
+          git add Casks/altty.rb
+          git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "Update Altty to $VERSION"
+          git push origin "altty-$VERSION"
+          gh pr create --repo "$TAP_REPOSITORY" --base main --head "altty-$VERSION" --title "Update Altty to $VERSION" --body "Uses the immutable GitHub Release ZIP and SHA-256 for $GITHUB_SHA."
+      - name: Remove ephemeral keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/altty-signing.keychain-db" || true

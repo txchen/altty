@@ -1,0 +1,45 @@
+name: Cask lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        description: Published MAJOR.MINOR.PATCH version
+      previous_version:
+        required: true
+        description: Published version to upgrade from
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and verify release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/current" "$RUNNER_TEMP/previous"
+          gh release download '${{ inputs.version }}' --pattern 'Altty-*-arm64.zip' --pattern checksums.txt --dir "$RUNNER_TEMP/current"
+          gh release download '${{ inputs.previous_version }}' --pattern checksums.txt --dir "$RUNNER_TEMP/previous"
+          cd "$RUNNER_TEMP/current" && shasum -a 256 -c checksums.txt
+      - name: Audit, clean install, upgrade, uninstall, and zap
+        run: |
+          SHA256="$(awk '{print $1}' "$RUNNER_TEMP/current/checksums.txt")"
+          PREVIOUS_SHA256="$(awk '{print $1}' "$RUNNER_TEMP/previous/checksums.txt")"
+          scripts/render-cask.sh '${{ inputs.version }}' "$SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/altty.rb"
+          scripts/render-cask.sh '${{ inputs.previous_version }}' "$PREVIOUS_SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/altty-previous.rb"
+          brew audit --cask --new "$RUNNER_TEMP/altty.rb"
+          brew install --cask "$RUNNER_TEMP/altty.rb"
+          test -d /Applications/Altty.app
+          brew uninstall --cask altty
+          brew install --cask "$RUNNER_TEMP/altty-previous.rb"
+          brew upgrade --cask "$RUNNER_TEMP/altty.rb"
+          brew uninstall --cask altty
+          brew install --cask "$RUNNER_TEMP/altty.rb"
+          brew uninstall --zap --cask altty
+          test ! -e "$HOME/Library/Application Support/app.altty.macos"
+          ! grep -q 'TCC' "$RUNNER_TEMP/altty.rb"
