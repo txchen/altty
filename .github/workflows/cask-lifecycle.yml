@@ -35,11 +35,16 @@ jobs:
           brew audit --cask --new "$RUNNER_TEMP/altty.rb"
           brew install --cask "$RUNNER_TEMP/altty.rb"
           test -d /Applications/Altty.app
+          mkdir -p "$HOME/Library/Application Support/app.altty.macos" "$HOME/Library/Caches/app.altty.macos" "$HOME/Library/Logs/app.altty.macos"
+          touch "$HOME/Library/Application Support/app.altty.macos/settings.json"
           brew uninstall --cask altty
+          test -e "$HOME/Library/Application Support/app.altty.macos/settings.json"
           brew install --cask "$RUNNER_TEMP/altty-previous.rb"
           brew upgrade --cask "$RUNNER_TEMP/altty.rb"
           brew uninstall --cask altty
           brew install --cask "$RUNNER_TEMP/altty.rb"
           brew uninstall --zap --cask altty
           test ! -e "$HOME/Library/Application Support/app.altty.macos"
+          test ! -e "$HOME/Library/Caches/app.altty.macos"
+          test ! -e "$HOME/Library/Logs/app.altty.macos"
           ! grep -q 'TCC' "$RUNNER_TEMP/altty.rb"

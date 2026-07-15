@@ -18,6 +18,7 @@ if [[ "$ARTIFACT" == *.zip ]]; then
   [[ "$(basename "$ARTIFACT")" == "$EXPECTED_NAME" ]] || die "artifact must be named $EXPECTED_NAME"
   TEMP_DIR="$(mktemp -d)"
   ditto -x -k "$ARTIFACT" "$TEMP_DIR"
+  [[ "$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" == 1 ]] || die "ZIP must contain only Altty.app"
   APP="$TEMP_DIR/Altty.app"
 else
   APP="$ARTIFACT"
@@ -35,7 +36,8 @@ BINARY="$APP/Contents/MacOS/Altty"
 otool -l "$BINARY" | awk '/LC_BUILD_VERSION/{found=1} found && /minos/{print $2; exit}' | grep -qx '15.0' || die "binary deployment target is not macOS 15.0"
 
 codesign --verify --deep --strict "$APP"
-codesign -dvv "$APP" 2>&1 | grep -q 'flags=.*runtime' || die "hardened runtime is not enabled"
+SIGNATURE_DETAILS="$(codesign -dvv "$APP" 2>&1)"
+grep -q 'flags=.*runtime' <<<"$SIGNATURE_DETAILS" || die "hardened runtime is not enabled"
 ENTITLEMENTS="$(codesign -d --entitlements :- "$APP" 2>/dev/null || true)"
 for forbidden in com.apple.security.app-sandbox com.apple.security.get-task-allow com.apple.security.cs.disable-library-validation com.apple.security.cs.allow-jit com.apple.security.cs.allow-unsigned-executable-memory com.apple.security.cs.allow-dyld-environment-variables; do
   if grep -q "$forbidden" <<<"$ENTITLEMENTS"; then die "forbidden entitlement: $forbidden"; fi
@@ -44,9 +46,16 @@ done
 if find "$APP" -type f \( -name '*.dSYM' -o -name '*.p12' -o -name '*.mobileprovision' -o -iname '*sparkle*' \) | grep -q .; then
   die "bundle contains debug, signing, or updater residue"
 fi
+while IFS= read -r bundled_file; do
+  relative_path="${bundled_file#"$APP/"}"
+  case "$relative_path" in
+    Contents/Info.plist|Contents/MacOS/Altty|Contents/_CodeSignature/CodeResources|Contents/CodeResources) ;;
+    *) die "unexpected bundle content: $relative_path" ;;
+  esac
+done < <(find "$APP" -type f -print)
 if [[ "$DISTRIBUTION" == "--distribution" ]]; then
-  codesign -dvv "$APP" 2>&1 | grep -q '^Authority=Developer ID Application:' || die "Developer ID Application signature missing"
-  codesign -dvv "$APP" 2>&1 | grep -q '^Timestamp=' || die "secure timestamp missing"
+  grep -q '^Authority=Developer ID Application:' <<<"$SIGNATURE_DETAILS" || die "Developer ID Application signature missing"
+  grep -q '^Timestamp=' <<<"$SIGNATURE_DETAILS" || die "secure timestamp missing"
   xcrun stapler validate "$APP"
   spctl --assess --type execute --verbose=2 "$APP"
 fi
