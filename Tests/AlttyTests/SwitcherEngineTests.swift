@@ -1198,6 +1198,36 @@ struct AllWindowsSwitcherSessionTests {
         #expect(engine.confirmSwitch() == [.focusWindow(target)])
     }
 
+    @Test func reconciliationPreservesLiveSessionTargetsWhileSemanticsAreStale() async {
+        let engine = SwitcherEngine()
+        let serverSnapshot = WindowServerSnapshot(activeSpaceIDs: [1], windows: [
+            .init(wid: 10, pid: 100, frontToBackOrder: 0),
+            .init(wid: 20, pid: 200, frontToBackOrder: 1),
+            .init(wid: 30, pid: 300, frontToBackOrder: 2),
+        ])
+        _ = await engine.receiveInventory(.replaceActiveSpace(serverSnapshot))
+        for window in serverSnapshot.windows {
+            _ = await engine.receiveInventory(.semanticsChanged(
+                .init(wid: window.wid, pid: window.pid, generation: 1),
+                semantics(title: "Window")
+            ))
+        }
+        let target = WindowIdentity(wid: 20, pid: 200, generation: 1)
+        _ = await engine.beginAllWindowsSwitch()
+        _ = await engine.receiveInventory(.semanticsInvalidated(target))
+        _ = await engine.receiveInventory(.reconcileActiveSpace(serverSnapshot))
+        #expect(engine.activeSwitchSession?.candidates.map(\.wid) == [10, 20, 30])
+        #expect(engine.activeSwitchSession?.target.identity == target)
+        #expect(engine.confirmSwitch() == [.focusWindow(target)])
+        // A temporarily unqualified target also survives a reconciliation during focus.
+        _ = await engine.receiveInventory(.reconcileActiveSpace(serverSnapshot))
+        #expect(engine.activeSwitchSession?.target.identity == target)
+        // Actual destruction still fails the in-flight transaction.
+        let effects = await engine.receiveInventory(.destroyed(target))
+        #expect(effects.contains(.presentSwitchingError(.unableToSwitch)))
+        #expect(engine.activeSwitchSession == nil)
+    }
+
 }
 
 @MainActor

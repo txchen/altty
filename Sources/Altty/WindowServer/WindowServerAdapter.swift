@@ -29,6 +29,7 @@ enum WindowServerInventoryEvent: Equatable, Sendable {
     case created(WindowID)
     case destroyed(WindowIdentity)
     case focused(WindowIdentity)
+    case focusNeedsReconciliation
     case semanticsInvalidated(WindowIdentity)
     case activeSpaceChanged
 }
@@ -163,10 +164,12 @@ private enum SkyLightEventCode: UInt32, CaseIterable {
     case activeSpaceChanged = 1401
 }
 
-private final class SkyLightEventContext: @unchecked Sendable {
+// System event seam: translates raw notifications only after WID ownership is known.
+final class SkyLightEventContext: @unchecked Sendable {
     private let lock = NSLock()
     private var enabled = true
     private var identitiesByWindowID: [WindowID: WindowIdentity] = [:]
+    private var pendingFocusedWindowID: WindowID?
     private let onEvent: @Sendable (WindowServerInventoryEvent) -> Void
 
     init(onEvent: @escaping @Sendable (WindowServerInventoryEvent) -> Void) {
@@ -174,7 +177,10 @@ private final class SkyLightEventContext: @unchecked Sendable {
     }
 
     func setEnabled(_ enabled: Bool) {
-        lock.withLock { self.enabled = enabled }
+        lock.withLock {
+            self.enabled = enabled
+            if !enabled { pendingFocusedWindowID = nil }
+        }
     }
 
     func setKnownWindows(_ windows: [WindowServerWindow], generation: InventoryGeneration) {
@@ -185,28 +191,41 @@ private final class SkyLightEventContext: @unchecked Sendable {
                 },
                 uniquingKeysWith: { first, _ in first }
             )
+            if enabled, let wid = pendingFocusedWindowID,
+               let identity = identitiesByWindowID[wid] {
+                onEvent(.focused(identity))
+            }
+            // A query that excludes the WID invalidates the hint too: it may have closed.
+            pendingFocusedWindowID = nil
         }
     }
 
     func publish(rawEvent: UInt32, wid: WindowID) {
-        let state = lock.withLock { (enabled, identitiesByWindowID[wid]) }
-        guard state.0, let code = SkyLightEventCode(rawValue: rawEvent) else { return }
-        let event: WindowServerInventoryEvent?
-        switch code {
-        case .windowCreated:
-            event = wid == 0 ? nil : .created(wid)
-        case .windowDestroyed:
-            event = state.1.map(WindowServerInventoryEvent.destroyed)
-            _ = lock.withLock { identitiesByWindowID.removeValue(forKey: wid) }
-        case .windowFocused:
-            event = state.1.map(WindowServerInventoryEvent.focused)
-        case .windowMoved, .windowResized, .windowOrderedIn, .windowOrderedOut:
-            event = state.1.map(WindowServerInventoryEvent.semanticsInvalidated)
-        case .spaceCurrentChanged, .activeSpaceChanged:
-            lock.withLock { identitiesByWindowID.removeAll() }
-            event = .activeSpaceChanged
+        lock.withLock {
+            guard enabled, let code = SkyLightEventCode(rawValue: rawEvent) else { return }
+            let identity = identitiesByWindowID[wid]
+            let event: WindowServerInventoryEvent?
+            switch code {
+            case .windowCreated:
+                event = wid == 0 ? nil : .created(wid)
+            case .windowDestroyed:
+                event = identity.map(WindowServerInventoryEvent.destroyed)
+                identitiesByWindowID.removeValue(forKey: wid)
+                if pendingFocusedWindowID == wid { pendingFocusedWindowID = nil }
+            case .windowFocused:
+                guard wid != 0 else { return }
+                pendingFocusedWindowID = identity == nil ? wid : nil
+                event = identity.map(WindowServerInventoryEvent.focused) ?? .focusNeedsReconciliation
+            case .windowMoved, .windowResized, .windowOrderedIn, .windowOrderedOut:
+                event = identity.map(WindowServerInventoryEvent.semanticsInvalidated)
+            case .spaceCurrentChanged, .activeSpaceChanged:
+                identitiesByWindowID.removeAll()
+                pendingFocusedWindowID = nil
+                event = .activeSpaceChanged
+            }
+            // Emit under the same lock so snapshot replay cannot overtake newer focus.
+            if let event { onEvent(event) }
         }
-        if let event { onEvent(event) }
     }
 }
 

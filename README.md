@@ -20,6 +20,15 @@ The build script produces an arm64 development application with the distinct
 `scripts/test.sh` runs the public `SwitcherEngine` tests on both Command Line
 Tools-only and full-Xcode installations.
 
+If a newer toolchain's default Swift build backend fails to initialize, use
+`ALTTY_SWIFT_BUILD_SYSTEM=native scripts/test.sh` and
+`ALTTY_SWIFT_BUILD_SYSTEM=native scripts/build-app.sh`. The runner also supplies the
+Swift Testing interop-library search path used by current Command Line Tools.
+
+Run `ruby scripts/test-release-contract.rb` for secret-free Cask URL, workflow
+filename, first-tap-publication and metadata-only-upgrade regression checks.
+These use temporary Git repositories and do not install or uninstall applications.
+
 ## Release dry run
 
 Release packaging can be exercised without Apple or GitHub credentials:

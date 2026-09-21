@@ -440,6 +440,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.run(await self.environment.engine.receiveInventory(.focused(identity)))
             }
+        case .focusNeedsReconciliation:
+            scheduleInventoryRefresh(.reconcile)
         case let .semanticsInvalidated(identity):
             scheduleSemanticInvalidation(identity)
         case .activeSpaceChanged:
@@ -473,6 +475,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func receive(_ event: WorkspaceApplicationEvent) {
         if case let .launched(facts) = event {
             environment.accessibility.observeApplication(pid: facts.pid)
+        }
+        if case let .terminated(pid) = event {
+            environment.accessibility.stopObservingApplication(pid: pid)
         }
         Task { [weak self] in
             guard let self else { return }

@@ -105,6 +105,8 @@ struct WindowInventorySnapshot: Equatable, Sendable {
     let generation: InventoryGeneration
     let activeSpaceIDs: [UInt64]
     let windows: [SwitchableWindow]
+    // Authoritative existence is independent of transient AX qualification.
+    let liveIdentities: Set<WindowIdentity>
     let focusedWindow: WindowIdentity?
     let frontmostApplicationPID: ProcessID?
     let exceptionForegroundContext: ExceptionForegroundContext
@@ -113,6 +115,7 @@ struct WindowInventorySnapshot: Equatable, Sendable {
         generation: 0,
         activeSpaceIDs: [],
         windows: [],
+        liveIdentities: [],
         focusedWindow: nil,
         frontmostApplicationPID: nil,
         exceptionForegroundContext: .unknown
@@ -296,6 +299,7 @@ actor WindowInventory: InventoryAdapter {
             generation: generation,
             activeSpaceIDs: activeSpaceIDs,
             windows: windows,
+            liveIdentities: Set(records.values.map(\.identity)),
             focusedWindow: focusedWindow,
             frontmostApplicationPID: frontmostApplicationPID,
             exceptionForegroundContext: ExceptionForegroundContext(

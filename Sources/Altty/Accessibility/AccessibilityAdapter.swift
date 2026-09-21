@@ -22,6 +22,7 @@ protocol AccessibilityAdapter: AnyObject {
     func focusedWindow() async -> FocusedWindow?
     func startMonitoringInventory(_ onEvent: @escaping @MainActor (AccessibilityInventoryEvent) -> Void)
     func observeApplication(pid: ProcessID)
+    func stopObservingApplication(pid: ProcessID)
     func stopMonitoringInventory()
 }
 
@@ -35,13 +36,13 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
     private var permissionChangeTimer: DispatchSourceTimer?
     private var permissionObservationDeadline: DispatchTime?
-    private struct ObserverRegistration {
-        let observer: AXObserver
-        let context: Unmanaged<AXObserverContext>
-    }
-
     private var inventoryEventHandler: (@MainActor (AccessibilityInventoryEvent) -> Void)?
-    private var elementObservers: [ProcessID: ObserverRegistration] = [:]
+    private var observationTokens: [ProcessID: UUID] = [:]
+    private var observationWorker: AccessibilityObservationWorker?
+
+    init(observationWorker: AccessibilityObservationWorker? = nil) {
+        self.observationWorker = observationWorker
+    }
 
     func availability() -> Availability {
         AXIsProcessTrusted() ? .available : .unavailable
@@ -93,15 +94,8 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
     }
 
     func releaseObservers() {
-        for registration in elementObservers.values {
-            CFRunLoopRemoveSource(
-                CFRunLoopGetMain(),
-                AXObserverGetRunLoopSource(registration.observer),
-                .commonModes
-            )
-            registration.context.release()
-        }
-        elementObservers.removeAll()
+        observationTokens.removeAll()
+        observationWorker?.removeAll()
     }
 
     func enrichment(for identity: WindowIdentity) async -> WindowSemanticPatch {
@@ -136,83 +130,35 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
     }
 
     func observeApplication(pid: ProcessID) {
-        guard pid > 0, elementObservers[pid] == nil, let inventoryEventHandler else { return }
-        let context = Unmanaged.passRetained(AXObserverContext(pid: pid) { event in
-            Task { @MainActor in inventoryEventHandler(event) }
-        })
-        var observer: AXObserver?
-        let error = AXObserverCreate(pid, Self.inventoryObserverCallback, &observer)
-        guard error == .success, let observer else {
-            context.release()
-            return
-        }
-
-        let application = AXUIElementCreateApplication(pid)
-        let pointer = context.toOpaque()
-        let appNotifications: [CFString] = [
-            kAXWindowCreatedNotification as CFString,
-            kAXFocusedWindowChangedNotification as CFString,
-        ]
-        for notification in appNotifications {
-            AXObserverAddNotification(observer, application, notification, pointer)
-        }
-        CFRunLoopAddSource(
-            CFRunLoopGetMain(),
-            AXObserverGetRunLoopSource(observer),
-            .commonModes
-        )
-        elementObservers[pid] = ObserverRegistration(observer: observer, context: context)
-
-        Task {
-            let windows = await Task.detached(priority: .utility) {
-                AXWindowReader.windowElements(pid: pid)
-            }.value
-            guard self.elementObservers[pid]?.observer === observer else { return }
-            for box in windows {
-                Self.addWindowNotifications(observer: observer, window: box.element, context: pointer)
+        guard pid > 0, observationTokens[pid] == nil, inventoryEventHandler != nil else { return }
+        if observationWorker == nil {
+            observationWorker = AccessibilityObservationWorker { pid, onEvent in
+                AXApplicationObservation(pid: pid, onEvent: onEvent)
             }
         }
+        let token = UUID()
+        observationTokens[pid] = token
+        observationWorker?.observe(pid: pid, onEvent: { [weak self] event in
+            Task { @MainActor [weak self] in
+                guard let self, self.observationTokens[pid] == token else { return }
+                self.inventoryEventHandler?(event)
+            }
+        }, onFailure: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.observationTokens[pid] == token else { return }
+                self.observationTokens[pid] = nil
+            }
+        })
+    }
+
+    func stopObservingApplication(pid: ProcessID) {
+        observationTokens[pid] = nil
+        observationWorker?.remove(pid: pid)
     }
 
     func stopMonitoringInventory() {
         releaseObservers()
         inventoryEventHandler = nil
-    }
-
-    private nonisolated static let inventoryObserverCallback: AXObserverCallback = {
-        observer, element, notification, contextPointer in
-        guard let contextPointer else { return }
-        let context = Unmanaged<AXObserverContext>.fromOpaque(contextPointer).takeUnretainedValue()
-        let notificationName = notification as String
-        let wid = AXWindowReader.windowID(element)
-
-        if notificationName == kAXWindowCreatedNotification {
-            addWindowNotifications(observer: observer, window: element, context: contextPointer)
-            context.publish(.created(pid: context.pid, wid: wid))
-        } else if notificationName == kAXFocusedWindowChangedNotification {
-            context.publish(.focused(pid: context.pid, wid: wid))
-        } else if notificationName == kAXUIElementDestroyedNotification {
-            context.publish(.destroyed(pid: context.pid, wid: wid))
-        } else {
-            context.publish(.semanticsChanged(pid: context.pid, wid: wid))
-        }
-    }
-
-    private nonisolated static func addWindowNotifications(
-        observer: AXObserver,
-        window: AXUIElement,
-        context: UnsafeMutableRawPointer
-    ) {
-        let notifications: [CFString] = [
-            kAXUIElementDestroyedNotification as CFString,
-            kAXTitleChangedNotification as CFString,
-            kAXWindowMiniaturizedNotification as CFString,
-            kAXWindowDeminiaturizedNotification as CFString,
-        ]
-        for notification in notifications {
-            let error = AXObserverAddNotification(observer, window, notification, context)
-            if error == .notificationAlreadyRegistered { continue }
-        }
     }
 
     private func publishAvailabilityIfChanged() {
@@ -264,7 +210,7 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
     }
 }
 
-private final class AXObserverContext: @unchecked Sendable {
+private final class AXObserverContext {
     let pid: ProcessID
     private let onEvent: @Sendable (AccessibilityInventoryEvent) -> Void
 
@@ -274,6 +220,69 @@ private final class AXObserverContext: @unchecked Sendable {
     }
 
     func publish(_ event: AccessibilityInventoryEvent) { onEvent(event) }
+}
+
+// All methods, including callbacks and invalidation, run on the observation worker.
+private final class AXApplicationObservation: AccessibilityObservationRegistration {
+    private let observer: AXObserver
+    private let context: AXObserverContext
+
+    init?(pid: ProcessID, onEvent: @escaping @Sendable (AccessibilityInventoryEvent) -> Void) {
+        precondition(!Thread.isMainThread)
+        let context = AXObserverContext(pid: pid, onEvent: onEvent)
+        var created: AXObserver?
+        guard AXObserverCreate(pid, Self.callback, &created) == .success,
+              let observer = created else { return nil }
+        self.observer = observer
+        self.context = context
+        let pointer = Unmanaged.passUnretained(context).toOpaque()
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.25)
+        for name in [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification] {
+            AXObserverAddNotification(observer, application, name as CFString, pointer)
+        }
+        for window in AXWindowReader.windowElements(pid: pid) {
+            Self.addWindowNotifications(observer: observer, window: window.element, context: pointer)
+        }
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+    }
+
+    func invalidate() {
+        precondition(!Thread.isMainThread)
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+    }
+
+    private static let callback: AXObserverCallback = { observer, element, notification, pointer in
+        autoreleasepool {
+            precondition(!Thread.isMainThread)
+            guard let pointer else { return }
+            let context = Unmanaged<AXObserverContext>.fromOpaque(pointer).takeUnretainedValue()
+            let wid = AXWindowReader.windowID(element)
+            switch notification as String {
+            case kAXWindowCreatedNotification:
+                addWindowNotifications(observer: observer, window: element, context: pointer)
+                context.publish(.created(pid: context.pid, wid: wid))
+            case kAXFocusedWindowChangedNotification:
+                context.publish(.focused(pid: context.pid, wid: wid))
+            case kAXUIElementDestroyedNotification:
+                context.publish(.destroyed(pid: context.pid, wid: wid))
+            default:
+                context.publish(.semanticsChanged(pid: context.pid, wid: wid))
+            }
+        }
+    }
+
+    private static func addWindowNotifications(
+        observer: AXObserver,
+        window: AXUIElement,
+        context: UnsafeMutableRawPointer
+    ) {
+        AXUIElementSetMessagingTimeout(window, 0.25)
+        for name in [kAXUIElementDestroyedNotification, kAXTitleChangedNotification,
+                     kAXWindowMiniaturizedNotification, kAXWindowDeminiaturizedNotification] {
+            AXObserverAddNotification(observer, window, name as CFString, context)
+        }
+    }
 }
 
 private struct AXElementBox: @unchecked Sendable {

@@ -20,6 +20,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Test release contracts
+        run: ruby scripts/test-release-contract.rb
       - name: Build, package, and inspect
         run: scripts/package-release.sh '${{ inputs.version }}' '${{ github.run_number }}'
       - uses: actions/upload-artifact@v4
@@ -43,6 +45,8 @@ jobs:
       ARTIFACT: Altty-${{ github.ref_name }}-arm64.zip
     steps:
       - uses: actions/checkout@v4
+      - name: Test release contracts
+        run: ruby scripts/test-release-contract.rb
       - name: Reject an existing release or asset
         env:
           GH_TOKEN: ${{ github.token }}
@@ -90,11 +94,12 @@ jobs:
         run: |
           SHA256="$(awk '{print $1}' .build/artifacts/checksums.txt)"
           LOCAL_URL="http://127.0.0.1:8765/$ARTIFACT"
-          scripts/render-cask.sh "$VERSION" "$SHA256" "$GITHUB_REPOSITORY" "$LOCAL_URL" > "$RUNNER_TEMP/altty-local.rb"
+          mkdir -p "$RUNNER_TEMP/local-cask"
+          scripts/render-cask.sh "$VERSION" "$SHA256" "$GITHUB_REPOSITORY" "$LOCAL_URL" > "$RUNNER_TEMP/local-cask/altty.rb"
           python3 -m http.server 8765 --bind 127.0.0.1 --directory .build/artifacts > "$RUNNER_TEMP/cask-server.log" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID"' EXIT
-          scripts/test-cask-lifecycle.sh "$RUNNER_TEMP/altty-local.rb"
+          scripts/test-cask-lifecycle.sh "$RUNNER_TEMP/local-cask/altty.rb"
       - name: Preflight the project tap update
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -105,15 +110,7 @@ jobs:
           cd "$RUNNER_TEMP/homebrew-tap"
           git checkout -b "altty-$VERSION"
           SHA256="$(awk '{print $1}' "$GITHUB_WORKSPACE/.build/artifacts/checksums.txt")"
-          "$GITHUB_WORKSPACE/scripts/render-cask.sh" "$VERSION" "$SHA256" "$GITHUB_REPOSITORY" > Casks/altty.rb
-          test "$(git diff --name-only)" = "Casks/altty.rb"
-          if git ls-files --error-unmatch Casks/altty.rb >/dev/null 2>&1; then
-            ! git diff --unified=0 -- Casks/altty.rb \
-              | grep -E '^[+-][^+-]' \
-              | grep -Ev '^[+-]  (version|sha256|url) '
-          fi
-          git diff --check
-          git add Casks/altty.rb
+          bash "$GITHUB_WORKSPACE/scripts/prepare-tap-update.sh" "$VERSION" "$SHA256" "$GITHUB_REPOSITORY" "$PWD"
           git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "Update Altty to $VERSION"
           gh auth status
           gh api "repos/$TAP_REPOSITORY" --jq '.permissions.push' | grep -qx true

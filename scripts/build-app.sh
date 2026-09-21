@@ -21,7 +21,11 @@ if [[ ! "$BUILD_VERSION" =~ ^[0-9]+$ ]]; then
 fi
 
 cd "$ROOT_DIR"
-swift build -c release --arch arm64
+BUILD_OPTIONS=()
+if [[ -n "${ALTTY_SWIFT_BUILD_SYSTEM:-}" ]]; then
+  BUILD_OPTIONS+=(--build-system "$ALTTY_SWIFT_BUILD_SYSTEM")
+fi
+swift build -c release --arch arm64 ${BUILD_OPTIONS[@]+"${BUILD_OPTIONS[@]}"}
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"

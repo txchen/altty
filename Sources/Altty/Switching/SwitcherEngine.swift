@@ -385,7 +385,7 @@ final class SwitcherEngine {
               let session = activeSwitchSession else { return effects }
 
         let snapshot = await inventory.snapshot()
-        let liveIdentities = Set(snapshot.windows.map(\.identity))
+        let liveIdentities = snapshot.liveIdentities
         if snapshot.generation != session.target.generation {
             effects.append(contentsOf: endSessionEffects())
             return effects

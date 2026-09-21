@@ -30,7 +30,7 @@ jobs:
         run: |
           SHA256="$(awk '{print $1}' "$RUNNER_TEMP/current/checksums.txt")"
           PREVIOUS_SHA256="$(awk '{print $1}' "$RUNNER_TEMP/previous/checksums.txt")"
-          scripts/render-cask.sh '${{ inputs.version }}' "$SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/altty.rb"
-          scripts/render-cask.sh '${{ inputs.previous_version }}' "$PREVIOUS_SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/altty-previous.rb"
-          brew audit --cask --new "$RUNNER_TEMP/altty.rb"
-          scripts/test-cask-lifecycle.sh "$RUNNER_TEMP/altty.rb" "$RUNNER_TEMP/altty-previous.rb"
+          scripts/render-cask.sh '${{ inputs.version }}' "$SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/current/altty.rb"
+          scripts/render-cask.sh '${{ inputs.previous_version }}' "$PREVIOUS_SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/previous/altty.rb"
+          brew audit --cask --new "$RUNNER_TEMP/current/altty.rb"
+          scripts/test-cask-lifecycle.sh "$RUNNER_TEMP/current/altty.rb" "$RUNNER_TEMP/previous/altty.rb"

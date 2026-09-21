@@ -32,9 +32,13 @@ fi
 # Command Line Tools can compile Swift Testing targets but do not include the
 # xctest host. Build through SwiftPM, then link the generated objects to the
 # Swift Testing entry point so the same tests run with either CLT or Xcode.
+BUILD_OPTIONS=()
+if [[ -n "${ALTTY_SWIFT_BUILD_SYSTEM:-}" ]]; then
+  BUILD_OPTIONS+=(--build-system "$ALTTY_SWIFT_BUILD_SYSTEM")
+fi
 ALTTY_RUN_FOCUS_SMOKE=0 \
 ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE=0 \
-swift test --enable-swift-testing
+swift test --enable-swift-testing ${BUILD_OPTIONS[@]+"${BUILD_OPTIONS[@]}"}
 if [[ "${ALTTY_RUN_FOCUS_SMOKE:-0}" == "1" \
     || "${ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE:-0}" == "1" ]]; then
   xcrun swiftc \
@@ -62,6 +66,7 @@ xcrun swiftc \
   -framework Testing \
   -Xlinker -rpath \
   -Xlinker "$DEVELOPER_FRAMEWORKS" \
+  -Xlinker -rpath -Xlinker "$DEVELOPER_FRAMEWORKS/../usr/lib" \
   -o "$RUNNER_BINARY"
 
 exec "$RUNNER_BINARY" "$@"
