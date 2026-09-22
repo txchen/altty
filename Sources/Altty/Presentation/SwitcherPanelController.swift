@@ -142,7 +142,7 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         let structureChanged = previous?.rows.map(\.identity) != state.rows.map(\.identity)
         let layoutChanged = previous?.listPresentation != state.listPresentation
         if layoutChanged { tableView.rowHeight = rowHeight(for: state.listPresentation.density) }
-        if structureChanged {
+        if structureChanged || layoutChanged {
             tableView.reloadData()
         } else if let previous {
             let changed = IndexSet(state.rows.indices.filter { previous.rows[$0] != state.rows[$0] })
@@ -234,13 +234,21 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
             content.leadingAnchor.constraint(equalTo: background.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: background.trailingAnchor),
             content.topAnchor.constraint(equalTo: background.topAnchor),
-            content.bottomAnchor.constraint(equalTo: background.bottomAnchor),
+            content.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -10),
+            header.widthAnchor.constraint(equalTo: content.widthAnchor),
+            scrollView.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -16),
             header.heightAnchor.constraint(equalToConstant: 40),
         ])
         panel.contentView = background
     }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        SwitcherSelectionRowView()
+    }
+
     private func makeRow(for rowState: SwitcherPanelRow) -> NSView {
+        let comfortable = state?.listPresentation.density != .compact
+        let iconSize: CGFloat = comfortable ? 36 : 32
         let applicationIcon = rowState.applicationBundlePath.map {
             NSWorkspace.shared.icon(forFile: $0)
         }
@@ -251,17 +259,17 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            icon.widthAnchor.constraint(equalToConstant: 32),
-            icon.heightAnchor.constraint(equalToConstant: 32),
+            icon.widthAnchor.constraint(equalToConstant: iconSize),
+            icon.heightAnchor.constraint(equalToConstant: iconSize),
         ])
 
         let title = NSTextField(labelWithString: rowState.title)
-        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.font = .systemFont(ofSize: comfortable ? 14 : 13, weight: .medium)
         title.lineBreakMode = .byTruncatingTail
         title.maximumNumberOfLines = 1
 
         let subtitle = NSTextField(labelWithString: rowState.applicationName)
-        subtitle.font = .systemFont(ofSize: 11)
+        subtitle.font = .systemFont(ofSize: comfortable ? 12 : 11)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
         subtitle.maximumNumberOfLines = 1
@@ -343,7 +351,7 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         let rowHeight = rowHeight(for: preferences.density)
         panel.setContentSize(NSSize(
             width: 520,
-            height: 40 + CGFloat(visibleRows) * (rowHeight + 2)
+            height: 50 + CGFloat(visibleRows) * (rowHeight + 2)
         ))
     }
 
@@ -387,6 +395,22 @@ private extension CGRect {
     var area: CGFloat {
         guard !isNull, !isInfinite else { return 0 }
         return max(width, 0) * max(height, 0)
+    }
+}
+
+/// Keep text in its normal appearance over a translucent accent fill.
+final class SwitcherSelectionRowView: NSTableRowView {
+    override var interiorBackgroundStyle: NSView.BackgroundStyle { .normal }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        let highContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), xRadius: 9, yRadius: 9)
+        NSColor.controlAccentColor.withAlphaComponent(highContrast ? 0.3 : 0.2).setFill()
+        outline.fill()
+        NSColor.controlAccentColor.setStroke()
+        outline.lineWidth = highContrast ? 2 : 1.5
+        outline.stroke()
     }
 }
 
