@@ -397,9 +397,18 @@ private struct SkyLightQuery: Sendable {
         while iteratorAdvance(iterator) {
             pidsByWID[iteratorGetWindowID(iterator)] = iteratorGetPID(iterator)
         }
+        // Read only geometry/level; never retain titles or capture window contents.
+        let metadata = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? [])
+        let metadataByWID = Dictionary(metadata.compactMap { entry -> (WindowID, [String: Any])? in
+            guard let wid = entry[kCGWindowNumber as String] as? NSNumber else { return nil }
+            return (wid.uint32Value, entry)
+        }, uniquingKeysWith: { first, _ in first })
         let windows = orderedWIDs.enumerated().compactMap { order, wid -> WindowServerWindow? in
             guard let pid = pidsByWID[wid], pid > 0 else { return nil }
-            return WindowServerWindow(wid: wid, pid: pid, frontToBackOrder: order)
+            let entry = metadataByWID[wid]
+            let frame = (entry?[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
+            return WindowServerWindow(wid: wid, pid: pid, frontToBackOrder: order,
+                level: (entry?[kCGWindowLayer as String] as? NSNumber)?.intValue, frame: frame)
         }
         return WindowServerSnapshot(activeSpaceIDs: activeSpaceIDs, windows: windows)
     }

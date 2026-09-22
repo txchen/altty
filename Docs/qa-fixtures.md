@@ -1,0 +1,57 @@
+# UI and Accessibility regression fixtures
+
+Run `ALTTY_SWIFT_BUILD_SYSTEM=native scripts/test.sh` for deterministic coverage.
+The native backend is an optional local workaround; omit the variable where the
+standard Swift build backend works.
+
+## Rendered UI baselines
+
+Install Pillow for the Python interpreter used by the script, then run
+`scripts/check-visuals.sh --check`. It renders the production switcher and settings
+views with synthetic content in light/dark appearances at 1x/2x: short lists,
+CJK/long titles, scrolled selection, removed rows, General and Exceptions.
+
+Baselines live under `Tests/Fixtures/VisualBaselines/macos-<major>`. Each directory
+records the exact OS build. Missing baselines fail; `--record` explicitly replaces
+them and requires visual review. The comparator rejects missing/extra images,
+dimension changes and more than 0.1% changed pixels (channel difference > 8).
+It writes comparison.json and diff PNGs under `.build/visual-qa/current`.
+
+These are deterministic content-view captures, not screenshots of the compositor.
+Icons use a fixed symbol, vibrancy is inactive, and the native source-list selection
+highlight is excluded because AppKit cacheDisplay renders that system effect black.
+Altty's own switcher selection remains captured. Window shadows, live wallpaper
+blending and actual display scaling require manual QA. Current baselines are from
+macOS 27.0 build 26A428; other major versions need separately reviewed baselines.
+
+## Real hostile application
+
+`scripts/check-hostile-fixture.sh` builds a disposable AppKit app and an AX client
+using the production adapter. The app opens two windows, stalls its main thread for
+900 ms, creates/closes 20 more windows, then closes everything and exits. The client
+starts enrichment during the stall and requires real window semantics to recover
+within the production retry budget. The script separately checks 22 creates and
+22 closes. All sources are under Tests/Fixtures and are excluded from app packaging.
+
+Exit 77 means the AX client lacks Accessibility permission; it never prompts or
+changes permissions. Other AX failures return a failing exit code even if lifecycle
+validation passes. Reports are under `.build/qa`; only synthetic fixture data is logged.
+The standalone fixture also accepts window count, churn count (up to 1,000), stall
+milliseconds and lifetime; see its usage output.
+
+On the current macOS 27.0 build 26A428 host, lifecycle validation passed, but AX
+recovery did not: AXWindows returned two application-role references and window-ID
+lookup returned illegalArgument (-25201). The same malformed references occurred
+before a stall and in an independent minimal Objective-C AppKit app/client with no
+Altty code. This isolates the failure from Altty's retry changes but does not prove
+its OS-level cause. Keep this integration gate failing until a usable system run
+passes; simulated retry tests are not a substitute.
+
+## Physical acceptance still required
+
+Exercise quick complete shortcut taps during a main-thread stall, held-modifier
+navigation, input permission revocation, monitor restart, Space transitions and
+representative apps (dialogs, floating palettes, slide shows). The gesture observer
+is read-only and retains only a bounded history of registered chords; if the system
+cannot install it, shortcuts report Input Monitoring unavailable. No typed text is
+recorded. Resource and long-running acceptance remains in [performance.md](performance.md).

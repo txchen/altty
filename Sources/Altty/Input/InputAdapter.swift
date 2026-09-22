@@ -65,6 +65,7 @@ private let alttyCarbonHotKeyHandler: EventHandlerUPP = { _, event, userData in
 
 enum ShortcutEvent: Equatable, Sendable {
     case switcherPressed(SwitcherMode, SwitchDirection)
+    case monitoringFailed
     case holdModifiersReleased
     case cancel(SwitcherCancellationReason)
 }
@@ -104,6 +105,10 @@ final class SystemInputAdapter: InputAdapter {
     private var globalKeyMonitor: Any?
     private var globalClickMonitor: Any?
     private var resignActiveObserver: NSObjectProtocol?
+    private let gestureHistory: ShortcutGestureHistory?
+    private var physicalMonitor: ShortcutPhysicalMonitor?
+    private var physicalMonitorGeneration = UUID()
+    private var activePhysicalPress: UInt64?
     private var shortcutIsActive = false
     private var activeHoldModifiers: ShortcutModifiers = []
     private(set) var configuredShortcuts: ShortcutPair
@@ -112,10 +117,12 @@ final class SystemInputAdapter: InputAdapter {
     init(
         registrar: any HotKeyRegistrar = CarbonHotKeyRegistrar(),
         shortcuts: ShortcutPair = .defaults,
-        usesSystemMonitors: Bool = true
+        usesSystemMonitors: Bool = true,
+        gestureHistory: ShortcutGestureHistory? = nil
     ) {
         self.registrar = registrar
         self.usesSystemMonitors = usesSystemMonitors
+        self.gestureHistory = gestureHistory ?? (usesSystemMonitors ? ShortcutGestureHistory() : nil)
         self.configuredShortcuts = shortcuts.validationError == nil ? shortcuts : .defaults
     }
 
@@ -251,6 +258,7 @@ final class SystemInputAdapter: InputAdapter {
         }
         activeRegistrations.append(contentsOf: proposedRegistrations)
         configuredShortcuts = pair
+        gestureHistory?.configure(activeRegistrations.map(\.hotKey))
         return .applied
     }
 
@@ -273,6 +281,24 @@ final class SystemInputAdapter: InputAdapter {
 
     private func installInteractionMonitors() -> Bool {
         guard localFlagsMonitor == nil, globalFlagsMonitor == nil else { return true }
+        if let gestureHistory {
+            let generation = UUID()
+            physicalMonitorGeneration = generation
+            let monitor = ShortcutPhysicalMonitor(history: gestureHistory, onChange: { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self, self.physicalMonitorGeneration == generation else { return }
+                    self.confirmPhysicalRelease()
+                }
+            }, onFailure: { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self, self.physicalMonitorGeneration == generation else { return }
+                    _ = self.setShortcutsEnabled(false)
+                    self.onEvent?(.monitoringFailed)
+                }
+            })
+            guard monitor.start() else { return false }
+            physicalMonitor = monitor
+        }
         localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
             [weak self] event in
             MainActor.assumeIsolated { self?.modifiersChanged(event.modifierFlags) }
@@ -315,6 +341,11 @@ final class SystemInputAdapter: InputAdapter {
     }
 
     private func removeInteractionMonitors() {
+        physicalMonitorGeneration = UUID()
+        physicalMonitor?.stop()
+        physicalMonitor = nil
+        activePhysicalPress = nil
+        gestureHistory?.reset()
         if let localFlagsMonitor { NSEvent.removeMonitor(localFlagsMonitor) }
         if let globalFlagsMonitor { NSEvent.removeMonitor(globalFlagsMonitor) }
         if let localKeyMonitor { NSEvent.removeMonitor(localKeyMonitor) }
@@ -335,13 +366,19 @@ final class SystemInputAdapter: InputAdapter {
               let registration = activeRegistrations.first(where: {
                   $0.hotKey.id == id
               }) else { return false }
+        if let gestureHistory {
+            guard let sequence = gestureHistory.claim(registration: id) else { return false }
+            activePhysicalPress = sequence
+        }
         shortcutIsActive = true
         activeHoldModifiers = registration.binding.modifiers.intersection(.required)
         onEvent?(.switcherPressed(registration.mode, registration.direction))
+        confirmPhysicalRelease()
         return true
     }
 
     func modifiersChanged(_ flags: NSEvent.ModifierFlags) {
+        if gestureHistory != nil { confirmPhysicalRelease(); return }
         guard shortcutIsActive,
               flags.intersection(.deviceIndependentFlagsMask)
                 .intersection(activeHoldModifiers.eventFlags).isEmpty else { return }
@@ -350,9 +387,19 @@ final class SystemInputAdapter: InputAdapter {
         onEvent?(.holdModifiersReleased)
     }
 
+    private func confirmPhysicalRelease() {
+        guard shortcutIsActive, let activePhysicalPress,
+              gestureHistory?.canConfirm(activePhysicalPress) == true else { return }
+        shortcutIsActive = false
+        self.activePhysicalPress = nil
+        activeHoldModifiers = []
+        onEvent?(.holdModifiersReleased)
+    }
+
     private func cancel(_ reason: SwitcherCancellationReason) {
         guard shortcutIsActive else { return }
         shortcutIsActive = false
+        activePhysicalPress = nil
         activeHoldModifiers = []
         onEvent?(.cancel(reason))
     }

@@ -57,14 +57,21 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
     private let queryScheduler = AccessibilityQueryScheduler()
     private let isProcessRunning: @Sendable (ProcessID) -> Bool
     private var enrichmentRevision: UInt64 = 0
+    private let retryDelays: [Duration]
+    private let batchFactory: @Sendable ([WindowIdentity]) -> any AXBatchReading
+    private var retryWaits: [UUID: (ProcessID, Task<Void, Error>)] = [:]
     private var processRevisions: [ProcessID: UUID] = [:]
 
     init(
         observationWorker: AccessibilityObservationWorker? = nil,
-        isProcessRunning: @escaping @Sendable (ProcessID) -> Bool = ProcessLiveness.isRunning
+        isProcessRunning: @escaping @Sendable (ProcessID) -> Bool = ProcessLiveness.isRunning,
+        retryDelays: [Duration] = [.milliseconds(150), .milliseconds(500), .seconds(1)],
+        batchFactory: @escaping @Sendable ([WindowIdentity]) -> any AXBatchReading = { AXEnrichmentBatch(identities: $0) }
     ) {
         self.observationWorker = observationWorker
         self.isProcessRunning = isProcessRunning
+        self.retryDelays = retryDelays
+        self.batchFactory = batchFactory
     }
 
     func availability() -> Availability {
@@ -125,6 +132,7 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
 
     func cancelPendingEnrichment() {
         enrichmentRevision &+= 1
+        retryWaits.values.forEach { $0.1.cancel() }
         queryScheduler.cancel()
     }
 
@@ -150,24 +158,45 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
             }
             let processRevision = processRevisions[pid] ?? UUID()
             processRevisions[pid] = processRevision
-            let batch = AXEnrichmentBatch(identities: group)
-            while true {
-                guard revision == enrichmentRevision,
-                      processRevision == processRevisions[pid] else { return }
-                guard let progress = await queryScheduler.run(pid: pid, operation: { [isProcessRunning] in
-                    guard isProcessRunning(pid) else { return AXEnrichmentBatch.Progress.finishedUnavailable(group) }
-                    return batch.readNext()
-                }) else { return }
-                guard revision == enrichmentRevision,
-                      processRevision == processRevisions[pid] else { return }
-                for (identity, patch) in progress.patches {
+            var requested = group
+            for attempt in 0...retryDelays.count {
+                let batch = batchFactory(requested)
+                let attempted = requested
+                var retry: [WindowIdentity] = []
+                while true {
                     guard revision == enrichmentRevision,
                           processRevision == processRevisions[pid] else { return }
-                    await onPatch(identity, patch)
+                    guard let progress = await queryScheduler.run(pid: pid, operation: { [isProcessRunning] in
+                        guard isProcessRunning(pid) else { return AXEnrichmentBatch.Progress.finishedUnavailable(attempted) }
+                        return batch.readNext()
+                    }) else { return }
+                    guard revision == enrichmentRevision,
+                          processRevision == processRevisions[pid] else { return }
+                    for (identity, patch) in progress.patches {
+                        guard revision == enrichmentRevision,
+                              processRevision == processRevisions[pid] else { return }
+                        if patch.readFailure == .temporarilyUnavailable, attempt < retryDelays.count {
+                            retry.append(identity)
+                        } else {
+                            await onPatch(identity, patch)
+                        }
+                    }
+                    if progress.finished { break }
                 }
-                if progress.finished { break }
+                guard !retry.isEmpty else { break }
+                // The query slot is already free. Only a finite one-shot timer remains.
+                guard await waitForRetry(pid: pid, delay: retryDelays[attempt]) else { return }
+                requested = retry
             }
         }
+    }
+
+    private func waitForRetry(pid: ProcessID, delay: Duration) async -> Bool {
+        let id = UUID()
+        let wait = Task { try await Task.sleep(for: delay) }
+        retryWaits[id] = (pid, wait)
+        defer { retryWaits[id] = nil }
+        do { try await wait.value; return true } catch { return false }
     }
 
     func deminimize(_ identity: WindowIdentity) async -> Bool {
@@ -220,6 +249,7 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
 
     func stopObservingApplication(pid: ProcessID) {
         processRevisions[pid] = nil
+        retryWaits.values.filter { $0.0 == pid }.forEach { $0.1.cancel() }
         queryScheduler.cancel(pid: pid)
         observationTokens[pid] = nil
         observationWorker?.remove(pid: pid)
@@ -375,11 +405,18 @@ private enum AXWindowReader {
         let subrole: String? = attribute(window, kAXSubroleAttribute as CFString, budget: budget)
         let minimized: Bool? = attribute(window, kAXMinimizedAttribute as CFString, budget: budget)
         let fullscreen: Bool? = attribute(window, "AXFullScreen" as CFString, budget: budget)
+        let main: Bool? = attribute(window, kAXMainAttribute as CFString, budget: budget)
+        let parent: AXUIElement? = attribute(window, kAXParentAttribute as CFString, budget: budget)
+        let parentID: WindowID? = parent.flatMap { parent in
+            let parentRole: String? = attribute(parent, kAXRoleAttribute as CFString, budget: budget)
+            return parentRole == "AXWindow" ? windowID(parent, budget: budget) : nil
+        }
         return WindowSemanticPatch(
             title: update(title), role: update(role), subrole: update(subrole),
             isMinimized: update(minimized), isFullscreen: update(fullscreen),
-            isTransient: role == nil || budget.expired ? .unavailable
-                : .value(WindowQualification.isTransient(role: role, subrole: subrole))
+            isTransient: role == nil || budget.expired || budget.failure != nil ? .unavailable
+                : .value(WindowQualification.isTransient(role: role, subrole: subrole)),
+            isMain: update(main), parentWindowID: .value(parentID ?? 0), readFailure: budget.failure
         )
     }
 
@@ -425,23 +462,26 @@ private enum AXWindowReader {
     static func windowID(_ element: AXUIElement, budget: AXReadBudget = AXReadBudget()) -> WindowID? {
         guard let copyWindowID, budget.prepare(element) else { return nil }
         var wid: WindowID = 0
-        return copyWindowID(element, &wid) == .success && wid != 0 ? wid : nil
+        let error = copyWindowID(element, &wid)
+        budget.record(error)
+        return error == .success && wid != 0 ? wid : nil
     }
 
     private static func windowElements(application: AXUIElement, budget: AXReadBudget) -> [AXElementBox] {
         var value: CFTypeRef?
-        guard budget.prepare(application), AXUIElementCopyAttributeValue(
-            application,
-            kAXWindowsAttribute as CFString,
-            &value
-        ) == .success,
-              let windows = value as? [AXUIElement] else { return [] }
+        guard budget.prepare(application) else { return [] }
+        let error = AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value)
+        budget.record(error)
+        guard error == .success, let windows = value as? [AXUIElement] else { return [] }
         return windows.map(AXElementBox.init)
     }
 
     private static func attribute<Value>(_ element: AXUIElement, _ name: CFString, budget: AXReadBudget) -> Value? {
         var value: CFTypeRef?
-        guard budget.prepare(element), AXUIElementCopyAttributeValue(element, name, &value) == .success else { return nil }
+        guard budget.prepare(element) else { return nil }
+        let error = AXUIElementCopyAttributeValue(element, name, &value)
+        budget.record(error)
+        guard error == .success else { return nil }
         return value as? Value
     }
 
@@ -453,7 +493,11 @@ private enum AXWindowReader {
 
 /// A batch owns AX references on sequential scheduler jobs only. Each slice has a
 /// total IPC budget; traversal resumes where it stopped and yields its PID slot.
-final class AXEnrichmentBatch: @unchecked Sendable {
+protocol AXBatchReading: Sendable {
+    func readNext() -> AXEnrichmentBatch.Progress
+}
+
+final class AXEnrichmentBatch: AXBatchReading, @unchecked Sendable {
     struct Progress: Sendable {
         let patches: [WindowIdentity: WindowSemanticPatch]
         let finished: Bool
@@ -510,7 +554,11 @@ final class AXEnrichmentBatch: @unchecked Sendable {
         }
         let finished = pendingWindow == nil && (index == windows.count || remaining.isEmpty)
         if finished {
-            for identity in remaining.values { patches[identity] = .unavailable }
+            for identity in remaining.values {
+                var patch = WindowSemanticPatch.unavailable
+                patch.readFailure = budget.failure ?? .temporarilyUnavailable
+                patches[identity] = patch
+            }
             remaining.removeAll()
             self.windows = nil
         }
@@ -519,6 +567,20 @@ final class AXEnrichmentBatch: @unchecked Sendable {
 }
 
 struct AXReadBudget {
+    private final class Status {
+        var failure: AccessibilityReadFailure?
+    }
+    private let status = Status()
+    var failure: AccessibilityReadFailure? { status.failure }
+    func record(_ error: AXError) {
+        switch error {
+        case .success, .attributeUnsupported, .noValue, .notImplemented: break
+        case .cannotComplete:
+            if status.failure == nil { status.failure = .temporarilyUnavailable }
+        case .invalidUIElement: status.failure = .invalidElement
+        default: if status.failure == nil { status.failure = .permanent }
+        }
+    }
     private let deadline: ContinuousClock.Instant
     private let now: @Sendable () -> ContinuousClock.Instant
     init(now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
@@ -532,7 +594,7 @@ struct AXReadBudget {
     }
     func prepare(_ element: AXUIElement) -> Bool {
         let remaining = now().duration(to: deadline)
-        guard remaining > .zero else { return false }
+        guard remaining > .zero else { record(.cannotComplete); return false }
         let parts = remaining.components
         let seconds = Double(parts.seconds) + Double(parts.attoseconds) / 1e18
         AXUIElementSetMessagingTimeout(element, Float(min(0.25, seconds)))

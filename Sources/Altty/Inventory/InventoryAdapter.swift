@@ -19,6 +19,8 @@ struct WindowServerWindow: Equatable, Sendable {
     let wid: WindowID
     let pid: ProcessID
     let frontToBackOrder: Int
+    var level: Int? = nil
+    var frame: CGRect? = nil
 }
 
 struct WindowServerSnapshot: Equatable, Sendable {
@@ -36,18 +38,41 @@ enum FieldUpdate<Value: Equatable & Sendable>: Equatable, Sendable {
 enum WindowQualification {
     private static let transientSubroles: Set<String> = [
         "AXMenu", "AXPopover", "AXSheet", "AXSystemFloatingWindow",
+        "AXFloatingWindow", "AXSystemDialog",
     ]
 
     static func isTransient(role: String?, subrole: String?) -> Bool {
         (role.map { $0 != "AXWindow" } ?? true)
             || subrole.map(transientSubroles.contains) == true
     }
+    static func accepts(
+        identity: WindowIdentity, server: WindowServerWindow?, role: String?, subrole: String?,
+        isMain: Bool?, isFullscreen: Bool?, parent: WindowID?
+    ) -> Bool {
+        guard !isTransient(role: role, subrole: subrole) else { return false }
+        if let parent, parent != 0, parent != identity.wid { return false }
+        if let frame = server?.frame, frame.width <= 0 || frame.height <= 0 { return false }
+        // Floating documents/slideshows can be genuine targets; non-main utility
+        // surfaces at elevated levels are not. Unknown AXMain fails closed there.
+        if let level = server?.level, level != 0 {
+            return isMain == true || isFullscreen == true
+        }
+        return true
+    }
+
+}
+
+enum AccessibilityReadFailure: Equatable, Sendable {
+    case temporarilyUnavailable
+    case invalidElement
+    case permanent
 }
 
 struct WindowSemanticPatch: Equatable, Sendable {
     static let unavailable = WindowSemanticPatch(
         title: .unavailable, role: .unavailable, subrole: .unavailable,
-        isMinimized: .unavailable, isFullscreen: .unavailable, isTransient: .unavailable
+        isMinimized: .unavailable, isFullscreen: .unavailable, isTransient: .unavailable,
+        isMain: .unavailable, parentWindowID: .unavailable
     )
     var title: FieldUpdate<String> = .unchanged
     var role: FieldUpdate<String> = .unchanged
@@ -55,6 +80,9 @@ struct WindowSemanticPatch: Equatable, Sendable {
     var isMinimized: FieldUpdate<Bool> = .unchanged
     var isFullscreen: FieldUpdate<Bool> = .unchanged
     var isTransient: FieldUpdate<Bool> = .unchanged
+    var isMain: FieldUpdate<Bool> = .unchanged
+    var parentWindowID: FieldUpdate<WindowID> = .unchanged
+    var readFailure: AccessibilityReadFailure? = nil
 }
 
 struct WorkspaceApplicationFacts: Equatable, Sendable {
@@ -161,6 +189,9 @@ private struct ApplicationState: Equatable, Sendable {
 
 private struct WindowRecord: Equatable, Sendable {
     let identity: WindowIdentity
+    var serverFacts: WindowServerWindow? = nil
+    var isMain = SemanticField<Bool>()
+    var parentWindowID = SemanticField<WindowID>()
     var title = SemanticField<String>()
     var role = SemanticField<String>()
     var subrole = SemanticField<String>()
@@ -170,6 +201,8 @@ private struct WindowRecord: Equatable, Sendable {
     var hasReceivedSemantics = false
 
     mutating func apply(_ patch: WindowSemanticPatch) {
+        isMain.apply(patch.isMain)
+        parentWindowID.apply(patch.parentWindowID)
         title.apply(patch.title)
         role.apply(patch.role)
         subrole.apply(patch.subrole)
@@ -182,7 +215,11 @@ private struct WindowRecord: Equatable, Sendable {
     var isSwitchable: Bool {
         guard role.value == "AXWindow", !role.isStale,
               isTransient.value == false, !isTransient.isStale else { return false }
-        return true
+        return WindowQualification.accepts(identity: identity, server: serverFacts,
+            role: role.value, subrole: subrole.value,
+            isMain: isMain.isStale ? nil : isMain.value,
+            isFullscreen: isFullscreen.isStale ? nil : isFullscreen.value,
+            parent: parentWindowID.value)
     }
 }
 
@@ -327,7 +364,7 @@ actor WindowInventory: InventoryAdapter {
         let ordered = orderedUniqueWindows(snapshot.windows)
         for window in ordered where window.wid != 0 && window.pid > 0 {
             let identity = WindowIdentity(wid: window.wid, pid: window.pid, generation: generation)
-            records[window.wid] = WindowRecord(identity: identity)
+            records[window.wid] = WindowRecord(identity: identity, serverFacts: window)
             mostRecentFirst.append(identity)
             coldStartFrontToBack[identity] = window.frontToBackOrder
         }
@@ -350,6 +387,7 @@ actor WindowInventory: InventoryAdapter {
                 remove(record.identity)
                 continue
             }
+            records[record.identity.wid]?.serverFacts = current
         }
 
         var enrichment: [WindowIdentity] = []
@@ -374,7 +412,7 @@ actor WindowInventory: InventoryAdapter {
                 remove(existing.identity)
             }
         }
-        records[window.wid] = WindowRecord(identity: identity)
+        records[window.wid] = WindowRecord(identity: identity, serverFacts: window)
         mostRecentFirst.append(identity)
         coldStartFrontToBack[identity] = window.frontToBackOrder
         return requestEnrichment(for: [identity])
@@ -405,7 +443,9 @@ actor WindowInventory: InventoryAdapter {
             subrole: .stale,
             isMinimized: .stale,
             isFullscreen: .stale,
-            isTransient: .stale
+            isTransient: .stale,
+            isMain: .stale,
+            parentWindowID: .stale
         )
     }
 

@@ -1406,6 +1406,26 @@ struct CurrentAppSwitcherSessionTests {
         #expect(engine.activeSwitchSession == nil)
     }
 
+    @Test func queuedGestureWaitsForCommittedFocusAndResumesOnCancellation() async {
+        let (engine, _) = await makeEngine(
+            windows: [(10, 100, false), (20, 200, false)],
+            frontmostPID: 100, focusedWID: 10
+        )
+        _ = await engine.invokeAllWindowsSwitch(direction: .forward)
+        _ = engine.confirmSwitch()
+        var resumed = false
+        let waiter = Task { @MainActor in
+            await engine.waitForCommittedSwitch()
+            resumed = true
+        }
+        await Task.yield()
+        #expect(!resumed)
+        _ = engine.invalidateActiveSpace()
+        await waiter.value
+        #expect(resumed)
+        #expect(engine.activeSwitchSession == nil)
+    }
+
     @Test func committedFocusFinishesBeforeAnotherModeCanStartAFreshSession() async {
         let (engine, identities) = await makeEngine(
             windows: [(10, 100, false), (20, 200, false), (30, 200, false)],

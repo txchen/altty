@@ -87,36 +87,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func receive(_ event: ShortcutEvent) {
         let revision = inventoryRefresh.revision
-        switch event {
-        case let .switcherPressed(mode, direction):
-            if environment.engine.activeSwitchSession == nil { shortcutPerformance.beginIfNeeded() }
-            let priorInvocation = shortcutInvocationTask
-            shortcutInvocationTask = Task { [weak self] in
-                await priorInvocation?.value
-                guard let self, !Task.isCancelled, self.inventoryRefresh.isCurrent(revision) else { return }
+        let previous = shortcutInvocationTask
+        shortcutInvocationTask = Task { [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled, self.inventoryRefresh.isCurrent(revision) else { return }
+            switch event {
+            case let .switcherPressed(mode, direction):
+                await self.environment.engine.waitForCommittedSwitch()
+                guard !Task.isCancelled, self.inventoryRefresh.isCurrent(revision) else { return }
+                if self.environment.engine.activeSwitchSession == nil { self.shortcutPerformance.beginIfNeeded() }
                 let effects = await self.environment.engine.invokeSwitch(mode: mode, direction: direction)
                 guard self.inventoryRefresh.isCurrent(revision) else { return }
                 self.run(effects)
-                self.refreshPresentation()
-            }
-        case .holdModifiersReleased:
-            let invocation = shortcutInvocationTask
-            shortcutInvocationTask = nil
-            Task { [weak self] in
-                await invocation?.value
-                guard let self, self.inventoryRefresh.isCurrent(revision) else { return }
+            case .holdModifiersReleased:
                 self.run(self.environment.engine.confirmSwitch())
-                self.refreshPresentation()
-            }
-        case let .cancel(reason):
-            shortcutPerformance.cancel()
-            let invocation = shortcutInvocationTask
-            shortcutInvocationTask = nil
-            Task { [weak self] in
-                await invocation?.value
-                guard let self, self.inventoryRefresh.isCurrent(revision) else { return }
+            case let .cancel(reason):
+                self.shortcutPerformance.cancel()
                 self.run(self.environment.engine.receiveSession(.cancel(reason)))
+            case .monitoringFailed:
+                self.run(self.environment.engine.receiveShortcutRegistration(.failed(
+                    self.environment.input.configuredShortcuts, .inputMonitoringUnavailable
+                )))
             }
+            self.refreshPresentation()
         }
     }
 

@@ -82,3 +82,27 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 - `ShortcutPair` contains exactly one base binding per switcher mode. Validation requires a main key and Option, Control or Command, reserves Shift for reverse navigation and rejects duplicate mode bindings.
 - `SystemInputAdapter` registers forward and derived Shift-reverse chords under transaction-specific IDs. Every proposed chord is registered before superseded registrations are retired; any Carbon or monitor failure rolls back the proposal and leaves the prior pair intact.
 - Settings are stored as a versioned JSON `SettingsSnapshot` under `Application Support/app.altty.macos/settings.json` using atomic file replacement. Malformed, unsupported or invalid input is preserved while safe defaults and an inline warning are presented.
+
+## Ordered gestures, AX recovery and qualification
+
+A read-only CG event tap on its own sleeping run loop records at most 128 registered
+shortcut presses and their physical modifier releases. Carbon callbacks claim those
+records on main; all logical shortcut events share one ordered task chain. Completed
+gestures wait for a committed focus transaction to finish before starting another
+session. Tap loss clears history and disables shortcuts; stale monitor callbacks are
+rejected by generation. Ordinary typing is never retained.
+
+AX enrichment retries only temporarily unavailable identities, at most three times
+with 150/500/1000 ms backoffs. Backoff holds no query slot; successful patches publish
+immediately. Process exit, observation stop and inventory invalidation cancel pending
+work. Invalid elements and permanent errors do not retry. Unsupported optional
+attributes are not transient failures.
+
+SkyLight remains authoritative for window identity and Space membership. Additional
+WindowServer layer/bounds metadata and AX main/fullscreen/parent facts filter empty
+surfaces, child windows and non-main elevated windows. Floating/system-dialog
+subroles are excluded; ordinary custom window subroles remain eligible. No per-app
+blacklist or alternate focus path is introduced.
+
+See [qa-fixtures.md](qa-fixtures.md) for pixel baselines, the real hostile app and
+explicit physical validation boundaries.

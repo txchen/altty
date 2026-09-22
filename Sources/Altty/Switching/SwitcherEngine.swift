@@ -307,6 +307,7 @@ final class SwitcherEngine {
     private var exceptionForegroundContext = ExceptionForegroundContext.unknown
     private var suppressedFocusPromotions: [WindowIdentity: Int] = [:]
     private var nextFocusTransactionID: UInt64 = 1
+    private var committedSwitchWaiters: [CheckedContinuation<Void, Never>] = []
     private var activeSpaceRevision: UInt64 = 0
     private var activeSpaceIsCurrent = true
     private(set) var activeSwitchSession: SwitcherSession?
@@ -427,6 +428,11 @@ final class SwitcherEngine {
     }
 
     /// Synchronous boundary: an invocation already awaiting the actor must also fail closed.
+    func waitForCommittedSwitch() async {
+        guard let session = activeSwitchSession, session.phase != .waitingForModifierRelease else { return }
+        await withCheckedContinuation { committedSwitchWaiters.append($0) }
+    }
+
     func invalidateActiveSpace() -> [SwitcherEffect] {
         activeSpaceRevision &+= 1
         activeSpaceIsCurrent = false
@@ -920,6 +926,9 @@ final class SwitcherEngine {
         additional: [SwitcherEffect] = []
     ) -> [SwitcherEffect] {
         activeSwitchSession = nil
+        let waiters = committedSwitchWaiters
+        committedSwitchWaiters.removeAll()
+        waiters.forEach { $0.resume() }
         var effects: [SwitcherEffect] = [.endActiveSession]
         effects.append(contentsOf: additional)
         if let pending = presentationState.shortcutSettings.pending {
