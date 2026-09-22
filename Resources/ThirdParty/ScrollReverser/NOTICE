@@ -1,0 +1,20 @@
+Scroll Reverser
+Copyright 2011 Nicholas Moore
+
+This software is released under the the Apache 2.0 License (see LICENSE).
+
+The name "Scroll Reverser" and the application icon are
+trademarks and may not be used by derivatve works (except as required to
+describe the origin of the work).
+
+Altty attribution and modifications:
+The mouse/trackpad classifier, passive gesture plus active scroll event-tap
+arrangement, and coordinated CGEvent/IOHID delta reversal were adapted from
+MouseTap.m, MouseTap.h, CoreGraphicsSPI.h and IOKitSPI.h in
+https://github.com/pilotmoon/Scroll-Reverser
+at commit 187bf3945b6107cd8486327c6165f32e523535a4.
+
+Altty rewrites these portions in Swift with injectable timing and adapters,
+runtime-resolved HID symbols, explicit failure cleanup, and one persistent
+mouse-only toggle. Trackpad reversal, step-size adjustment, upstream UI,
+branding, logging, update system and application code are not included.

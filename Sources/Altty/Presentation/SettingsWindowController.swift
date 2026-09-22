@@ -1,6 +1,10 @@
 import AppKit
 import Carbon
 
+private final class SettingsDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 private extension ListDensity {
     var title: String {
         switch self {
@@ -42,6 +46,9 @@ struct SettingsWindowObservedState: Equatable {
     let sidebarAccessibilityLabel: String?
     let focusedAccessibilityLabel: String?
     let showsLoginItemsRecovery: Bool
+    let mouseScrollControlTitle: String
+    let mouseScrollMessage: String?
+    let showsInputMonitoringRecovery: Bool
 }
 
 @MainActor
@@ -78,6 +85,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         control.action = #selector(generalControlsChanged)
         return control
     }()
+    private lazy var mouseScrollCheckbox = NSButton(
+        checkboxWithTitle: "Reverse mouse wheel direction",
+        target: self,
+        action: #selector(generalControlsChanged)
+    )
+    private let mouseScrollMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private lazy var inputMonitoringButton = NSButton(
+        title: "Allow Input Monitoring…",
+        target: self,
+        action: #selector(requestMouseScrollPermission)
+    )
     private lazy var densityPopUp: NSPopUpButton = {
         let control = NSPopUpButton()
         control.addItems(withTitles: ListDensity.allCases.map(\.title))
@@ -142,6 +160,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         accessibilityButton.setAccessibilityLabel("Grant Accessibility Permission")
         recheckButton.setAccessibilityLabel("Check Altty readiness")
         launchAtLoginCheckbox.setAccessibilityLabel("Launch Altty at login")
+        mouseScrollCheckbox.setAccessibilityLabel("Reverse mouse wheel direction")
+        mouseScrollCheckbox.setAccessibilityHelp("Reverse mouse scrolling while keeping trackpad scrolling unchanged.")
+        inputMonitoringButton.setAccessibilityLabel("Allow Altty Input Monitoring")
+        inputMonitoringButton.isHidden = true
+        mouseScrollMessageLabel.isHidden = true
         visibleRowsPopUp.setAccessibilityLabel("Visible switcher rows")
         densityPopUp.setAccessibilityLabel("Switcher row spacing")
         openLoginItemsButton.setAccessibilityLabel("Open Login Items Settings")
@@ -161,7 +184,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             sidebarAccessibilityLabel: sidebar.accessibilityLabel(),
             focusedAccessibilityLabel: (window?.firstResponder as? NSView)?
                 .accessibilityLabel(),
-            showsLoginItemsRecovery: !openLoginItemsButton.isHidden
+            showsLoginItemsRecovery: !openLoginItemsButton.isHidden,
+            mouseScrollControlTitle: mouseScrollCheckbox.title,
+            mouseScrollMessage: mouseScrollMessageLabel.isHidden ? nil : mouseScrollMessageLabel.stringValue,
+            showsInputMonitoringRecovery: !inputMonitoringButton.isHidden
         )
     }
 
@@ -181,6 +207,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         skyLightDetailLabel.stringValue = state.skyLightDetail
         accessibilityButton.isHidden = !state.showsAccessibilityAction
         updateGeneral(state.generalSettings)
+        let scrollMessage = state.generalSettings.mouseScrollMessage(accessibility: state.accessibility)
+        mouseScrollMessageLabel.stringValue = scrollMessage ?? ""
+        mouseScrollMessageLabel.isHidden = scrollMessage == nil
+        inputMonitoringButton.isHidden = !state.generalSettings.current.reverseMouseWheel
+            || (state.generalSettings.mouseScrollStatus != .inputMonitoringRequired
+                && state.generalSettings.mouseScrollStatus != .unavailable)
         updateShortcuts(state.shortcutSettings)
         exceptionsController.update(state.exceptionSettings)
     }
@@ -245,7 +277,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     private func showPane(_ pane: Pane) {
-        let root = NSView()
+        let root = SettingsDocumentView()
         let title = NSTextField(labelWithString: pane.title)
         title.font = .systemFont(ofSize: 24, weight: .semibold)
         let detail = NSTextField(wrappingLabelWithString: pane.detail)
@@ -266,6 +298,16 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             stack.addArrangedSubview(recheckButton)
             stack.addArrangedSubview(separator())
             stack.addArrangedSubview(launchAtLoginCheckbox)
+            stack.addArrangedSubview(mouseScrollCheckbox)
+            let mouseScrollDetail = NSTextField(wrappingLabelWithString:
+                "Reverse mouse scrolling. Trackpad direction stays as set in macOS.")
+            mouseScrollDetail.textColor = .secondaryLabelColor
+            mouseScrollDetail.font = .systemFont(ofSize: 12)
+            stack.addArrangedSubview(mouseScrollDetail)
+            mouseScrollMessageLabel.textColor = .systemOrange
+            mouseScrollMessageLabel.font = .systemFont(ofSize: 12)
+            stack.addArrangedSubview(mouseScrollMessageLabel)
+            stack.addArrangedSubview(inputMonitoringButton)
             stack.addArrangedSubview(formRow(label: "Visible rows", control: visibleRowsPopUp))
             stack.addArrangedSubview(formRow(label: "Row spacing", control: densityPopUp))
             generalMessageLabel.textColor = .systemOrange
@@ -335,6 +377,23 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         ])
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         root.translatesAutoresizingMaskIntoConstraints = false
+        if pane == .general {
+            let scroll = NSScrollView()
+            scroll.hasVerticalScroller = true
+            scroll.drawsBackground = false
+            scroll.translatesAutoresizingMaskIntoConstraints = false
+            scroll.documentView = root
+            contentContainer.addSubview(scroll)
+            NSLayoutConstraint.activate([
+                scroll.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+                scroll.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+                scroll.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+                scroll.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
+                root.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+                stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -28),
+            ])
+            return
+        }
         contentContainer.addSubview(root)
         NSLayoutConstraint.activate([
             root.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
@@ -346,6 +405,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     @objc private func recheck() { onCommand(.recheckReadiness) }
     @objc private func requestAccessibility() { onCommand(.requestAccessibility) }
+    @objc private func requestMouseScrollPermission() { onCommand(.requestMouseScrollPermission) }
     @objc private func openProject() { performAboutAction(.project) }
     @objc private func openSupport() { performAboutAction(.support) }
     @objc private func checkForUpdates() { performAboutAction(.checkForUpdates) }
@@ -371,6 +431,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         onCommand(.replaceGeneralSettings(settings))
     }
 
+    func toggleMouseScrollReversal() { mouseScrollCheckbox.performClick(nil) }
+
     @objc private func generalControlsChanged() {
         guard (0..<3).contains(visibleRowsPopUp.indexOfSelectedItem),
               ListDensity.allCases.indices.contains(densityPopUp.indexOfSelectedItem) else {
@@ -381,7 +443,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             listPresentation: ListPresentationPreferences(
                 visibleRowCount: visibleRowsPopUp.indexOfSelectedItem + 6,
                 density: ListDensity.allCases[densityPopUp.indexOfSelectedItem]
-            )
+            ),
+            reverseMouseWheel: mouseScrollCheckbox.state == .on
         ))
     }
 
@@ -389,6 +452,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         displayedGeneralSettings = state.displayed
         generalInlineMessage = state.inlineMessage
         launchAtLoginCheckbox.state = state.displayed.launchAtLogin ? .on : .off
+        mouseScrollCheckbox.state = state.displayed.reverseMouseWheel ? .on : .off
         visibleRowsPopUp.selectItem(at: state.displayed.listPresentation.visibleRowCount - 6)
         densityPopUp.selectItem(at: ListDensity.allCases.firstIndex(
             of: state.displayed.listPresentation.density
@@ -402,7 +466,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         sidebar.nextKeyView = accessibilityButton
         accessibilityButton.nextKeyView = recheckButton
         recheckButton.nextKeyView = launchAtLoginCheckbox
-        launchAtLoginCheckbox.nextKeyView = visibleRowsPopUp
+        launchAtLoginCheckbox.nextKeyView = mouseScrollCheckbox
+        mouseScrollCheckbox.nextKeyView = inputMonitoringButton
+        inputMonitoringButton.nextKeyView = visibleRowsPopUp
         visibleRowsPopUp.nextKeyView = densityPopUp
         densityPopUp.nextKeyView = openLoginItemsButton
         openLoginItemsButton.nextKeyView = sidebar

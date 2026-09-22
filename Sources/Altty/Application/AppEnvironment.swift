@@ -4,6 +4,7 @@ import Foundation
 struct AppEnvironment {
     let engine: SwitcherEngine
     let input: any InputAdapter
+    let mouseScroll: any MouseScrollAdapter
     let windowServer: any WindowServerAdapter
     let accessibility: any AccessibilityAdapter
     let workspace: any WorkspaceAdapter
@@ -24,7 +25,8 @@ struct AppEnvironment {
         let launchAtLoginStatus = launchAtLogin.status
         let generalSettings = GeneralSettings(
             launchAtLogin: launchAtLoginStatus == .enabled,
-            listPresentation: settings.snapshot.general.listPresentation
+            listPresentation: settings.snapshot.general.listPresentation,
+            reverseMouseWheel: settings.snapshot.general.reverseMouseWheel
         )
         return AppEnvironment(
             engine: SwitcherEngine(
@@ -36,6 +38,7 @@ struct AppEnvironment {
                 settingsWarning: settings.warning?.message
             ),
             input: SystemInputAdapter(shortcuts: settings.snapshot.shortcuts),
+            mouseScroll: SystemMouseScrollAdapter(),
             windowServer: SystemWindowServerAdapter(),
             accessibility: SystemAccessibilityAdapter(),
             workspace: workspace,

@@ -98,6 +98,7 @@ enum SwitcherCommand: Equatable, Sendable {
     case systemDidWake
     case openSettings
     case requestAccessibility
+    case requestMouseScrollPermission
     case checkForUpdates
     case openExternalPage(ExternalPage)
     case openLoginItemsSettings
@@ -127,6 +128,7 @@ enum SwitcherEffect: Equatable, Sendable {
     case recordDiagnostic(DiagnosticEvent)
     case presentSettings
     case requestAccessibility
+    case requestMouseScrollPermission
     case checkForUpdates
     case openExternalPage(ExternalPage)
     case openLoginItemsSettings
@@ -147,6 +149,7 @@ enum SwitcherEffect: Equatable, Sendable {
     case replaceShortcuts(ShortcutPair)
     case rollbackShortcuts(ShortcutPair)
     case setLaunchAtLogin(Bool)
+    case setMouseScrollReversalEnabled(Bool)
     case persistSettings(SettingsSnapshot)
 }
 
@@ -304,6 +307,8 @@ final class SwitcherEngine {
     private var exceptionForegroundContext = ExceptionForegroundContext.unknown
     private var suppressedFocusPromotions: [WindowIdentity: Int] = [:]
     private var nextFocusTransactionID: UInt64 = 1
+    private var activeSpaceRevision: UInt64 = 0
+    private var activeSpaceIsCurrent = true
     private(set) var activeSwitchSession: SwitcherSession?
 
     private(set) var presentationState = SwitcherPresentationState(
@@ -421,6 +426,19 @@ final class SwitcherEngine {
         return effects
     }
 
+    /// Synchronous boundary: an invocation already awaiting the actor must also fail closed.
+    func invalidateActiveSpace() -> [SwitcherEffect] {
+        activeSpaceRevision &+= 1
+        activeSpaceIsCurrent = false
+        return activeSwitchSession == nil ? [] : endSessionEffects()
+    }
+
+    func activeSpaceRefreshCompleted() { activeSpaceIsCurrent = true }
+
+    func isCurrentFocusTransaction(_ transactionID: UInt64) -> Bool {
+        activeSpaceIsCurrent && activeSwitchSession?.transactionID == transactionID
+    }
+
     func inventorySnapshot() async -> WindowInventorySnapshot {
         await inventory.snapshot()
     }
@@ -443,8 +461,11 @@ final class SwitcherEngine {
         mode: SwitcherMode,
         direction: SwitchDirection
     ) async -> [SwitcherEffect] {
-        guard activeSwitchSession == nil else { return [] }
+        guard activeSpaceIsCurrent, activeSwitchSession == nil else { return [] }
+        let revision = activeSpaceRevision
         let snapshot = await inventory.snapshot()
+        guard activeSpaceIsCurrent, revision == activeSpaceRevision,
+              activeSwitchSession == nil else { return [] }
         let invocationPID = snapshot.frontmostApplicationPID
             ?? snapshot.focusedWindow?.pid
         let visibleWindows = snapshot.windows.filter { window in
@@ -659,6 +680,8 @@ final class SwitcherEngine {
             return [.presentSettings]
         case .requestAccessibility:
             return [.requestAccessibility, .checkAccessibility]
+        case .requestMouseScrollPermission:
+            return [.requestMouseScrollPermission]
         case .checkForUpdates:
             return [.checkForUpdates]
         case let .openExternalPage(page):
@@ -713,7 +736,8 @@ final class SwitcherEngine {
         guard displayed.launchAtLogin != isEnabled else { return [] }
         let reconciled = GeneralSettings(
             launchAtLogin: isEnabled,
-            listPresentation: displayed.listPresentation
+            listPresentation: displayed.listPresentation,
+            reverseMouseWheel: displayed.reverseMouseWheel
         )
         presentationState.generalSettings.pending = reconciled
         return [.persistSettings(settingsSnapshot(source: .current, general: reconciled))]
@@ -770,11 +794,18 @@ final class SwitcherEngine {
                 effects.append(contentsOf: reconcileExceptionShortcutPolicy())
             }
             if savesGeneral {
+                let mouseScrollChanged = presentationState.generalSettings.current.reverseMouseWheel
+                    != snapshot.general.reverseMouseWheel
                 presentationState.generalSettings.current = snapshot.general
                 presentationState.generalSettings.pending = nil
                 presentationState.generalSettings.error = nil
                 presentationState.generalSettings.recoveryWarning = nil
                 presentationState.generalSettings.launchAtLoginRequiresApproval = false
+                if mouseScrollChanged {
+                    effects.append(.setMouseScrollReversalEnabled(
+                        snapshot.general.reverseMouseWheel && presentationState.accessibility == .available
+                    ))
+                }
             }
             return effects
         case let .failed(snapshot):
@@ -922,6 +953,9 @@ final class SwitcherEngine {
             generalSettings: generalSettings
         )
         var effects: [SwitcherEffect] = [.setShortcutsEnabled(false)]
+        if generalSettings.current.reverseMouseWheel {
+            effects.append(.setMouseScrollReversalEnabled(false))
+        }
         effects.append(contentsOf: endSessionEffects())
         effects.append(contentsOf: [
             .stopInventoryObservation,
@@ -957,6 +991,10 @@ final class SwitcherEngine {
         guard previousState != presentationState else { return [] }
 
         var effects: [SwitcherEffect] = []
+        if previousState.accessibility != presentationState.accessibility,
+           presentationState.generalSettings.current.reverseMouseWheel {
+            effects.append(.setMouseScrollReversalEnabled(presentationState.accessibility == .available))
+        }
         let accessibilityWasRevoked = previousState.accessibility == .available
             && presentationState.accessibility == .unavailable
 
@@ -989,5 +1027,9 @@ final class SwitcherEngine {
             break
         }
         return effects
+    }
+
+    func receiveMouseScrollStatus(_ status: MouseScrollStatus) {
+        presentationState.generalSettings.mouseScrollStatus = status
     }
 }

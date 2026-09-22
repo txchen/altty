@@ -118,10 +118,35 @@ ALTTY_RUN_SHORTCUT_SMOKE=1 \
 scripts/test.sh --filter realIgnoredForegroundApplicationReceivesConfiguredShortcutPair
 ```
 
+## Mouse wheel direction
+
+In Settings → General, enable **Reverse mouse wheel direction** to reverse mouse
+scrolling on both axes, independently of the window switcher. The single toggle
+is off by default and persists across restarts. Set your preferred trackpad
+direction in macOS System Settings; Altty does not change that preference.
+
+This feature requires Accessibility and Input Monitoring. If General shows a
+permission warning, use the permission button, enable Altty in System Settings,
+then choose Check Readiness (or restart Altty if macOS requests it).
+
+Quit Scroll Reverser or disable other mouse-direction tools before testing to
+avoid double reversal. Check a long page in Safari and a Finder window: the
+mouse should reverse, while two-finger trackpad scrolling and its momentum
+should remain unchanged. Also check horizontal scrolling, turning the toggle
+off, and restarting Altty with it on.
+
+Mouse/trackpad identification and the HID compatibility path are adapted from
+[Scroll Reverser](https://github.com/pilotmoon/Scroll-Reverser/tree/187bf3945b6107cd8486327c6165f32e523535a4),
+under Apache-2.0. This uses upstream touch-timing heuristics, not guaranteed
+per-device identification; third-party drivers and unusual gesture settings
+still need hardware validation. License and attribution ship in the app's
+`Contents/Resources/ThirdParty/ScrollReverser` directory.
+
 ## Current foundation
 
 - Menu bar app
 - Settings window
+- Optional mouse-only scroll reversal with trackpad gesture discrimination
 - Fail-closed readiness and recovery for Accessibility and SkyLight capability
 - Event-driven, generation-safe Active Space window inventory with lazy AX enrichment
 - Atomic configurable All-Windows and Current-App shortcut recorders with versioned local persistence

@@ -132,18 +132,35 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
     }
 
     func update(state: SwitcherPanelState) {
+        let previous = self.state
+        guard previous != state else { return }
         self.state = state
-        titleLabel.stringValue = state.title
-        shortcutLabel.stringValue = state.shortcutDescription
-        tableView.reloadData()
-        tableView.rowHeight = rowHeight(for: state.listPresentation.density)
-        if let selectedRow = state.rows.firstIndex(where: {
-            $0.identity == state.selectedIdentity
-        }) {
-            tableView.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
-            tableView.scrollRowToVisible(selectedRow)
+        if previous?.title != state.title { titleLabel.stringValue = state.title }
+        if previous?.shortcutDescription != state.shortcutDescription {
+            shortcutLabel.stringValue = state.shortcutDescription
         }
-        resizeForRows(state.rows.count, preferences: state.listPresentation)
+        let structureChanged = previous?.rows.map(\.identity) != state.rows.map(\.identity)
+        let layoutChanged = previous?.listPresentation != state.listPresentation
+        if layoutChanged { tableView.rowHeight = rowHeight(for: state.listPresentation.density) }
+        if structureChanged {
+            tableView.reloadData()
+        } else if let previous {
+            let changed = IndexSet(state.rows.indices.filter { previous.rows[$0] != state.rows[$0] })
+            if !changed.isEmpty { tableView.reloadData(forRowIndexes: changed, columnIndexes: IndexSet(integer: 0)) }
+        }
+        if structureChanged || layoutChanged {
+            resizeForRows(state.rows.count, preferences: state.listPresentation)
+        }
+        if let selectedRow = state.rows.firstIndex(where: { $0.identity == state.selectedIdentity }) {
+            if tableView.selectedRow != selectedRow {
+                tableView.selectRowIndexes(IndexSet(integer: selectedRow), byExtendingSelection: false)
+            }
+            if structureChanged || layoutChanged || previous?.selectedIdentity != state.selectedIdentity {
+                tableView.scrollRowToVisible(selectedRow)
+            }
+        } else {
+            tableView.deselectAll(nil)
+        }
     }
 
     func dismiss() {

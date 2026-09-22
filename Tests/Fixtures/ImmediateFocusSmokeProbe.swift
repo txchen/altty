@@ -320,6 +320,7 @@ private enum ImmediateFocusSmokeProbe {
         let environment = AppEnvironment(
             engine: engine,
             input: input,
+            mouseScroll: SystemMouseScrollAdapter(),
             windowServer: windowServer,
             accessibility: accessibility,
             workspace: workspace,

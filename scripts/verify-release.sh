@@ -28,6 +28,9 @@ fi
 PLIST="$APP/Contents/Info.plist"
 BINARY="$APP/Contents/MacOS/Altty"
 [[ -f "$PLIST" && -x "$BINARY" ]] || die "bundle contents are incomplete"
+for notice in LICENSE NOTICE; do
+  [[ -s "$APP/Contents/Resources/ThirdParty/ScrollReverser/$notice" ]] || die "Scroll Reverser $notice is missing"
+done
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" == "app.altty.macos" ]] || die "production bundle identifier mismatch"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" == "$VERSION" ]] || die "short version mismatch"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" == "$BUILD_VERSION" ]] || die "build version mismatch"
@@ -50,6 +53,7 @@ while IFS= read -r bundled_file; do
   relative_path="${bundled_file#"$APP/"}"
   case "$relative_path" in
     Contents/Info.plist|Contents/MacOS/Altty|Contents/_CodeSignature/CodeResources|Contents/CodeResources) ;;
+    Contents/Resources/ThirdParty/ScrollReverser/LICENSE|Contents/Resources/ThirdParty/ScrollReverser/NOTICE) ;;
     *) die "unexpected bundle content: $relative_path" ;;
   esac
 done < <(find "$APP" -type f -print)

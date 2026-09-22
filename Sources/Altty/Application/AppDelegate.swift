@@ -4,9 +4,17 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let environment: AppEnvironment
     private var isMonitoringInventory = false
-    private var inventoryRefreshCoalescer = InventoryRefreshCoalescer()
-    private var inventoryRefreshTask: Task<Void, Never>?
-    private var inventoryRefreshSequence: UInt64 = 0
+    private lazy var inventoryRefresh = InventoryRefreshScheduler(
+        query: { [weak self] in
+            guard let self else { return nil }
+            self.recordAdapterCall(.skyLight)
+            return await self.environment.windowServer.activeSpaceSnapshot()
+        },
+        apply: { [weak self] snapshot, mode, revision in
+            await self?.applyInventoryRefresh(snapshot, mode: mode, revision: revision)
+        }
+    )
+    private var inventoryObservationRevision: UInt64 = 0
     private var inventoryGeneration: InventoryGeneration = 0
     private var semanticInvalidationTasks: [WindowIdentity: Task<Void, Never>] = [:]
     private var shortcutInvocationTask: Task<Void, Never>?
@@ -26,6 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.run(self.environment.engine.receiveSession(event))
         }
         environment.input.install { [weak self] event in self?.receive(event) }
+        environment.mouseScroll.installStatusHandler { [weak self] status in
+            guard let self else { return }
+            self.environment.engine.receiveMouseScrollStatus(status)
+            self.refreshPresentation()
+        }
         environment.accessibility.startMonitoringAvailability { [weak self] availability in
             self?.receive(.accessibilityChanged(availability))
         }
@@ -45,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switcherPanelTask?.cancel()
         environment.presentation.dismissSwitcherPanel()
         environment.input.setShortcutsEnabled(false)
+        environment.mouseScroll.setEnabled(false)
         stopInventoryObservation()
         environment.accessibility.stopMonitoringAvailability()
         environment.accessibility.releaseObservers()
@@ -72,17 +86,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func receive(_ event: ShortcutEvent) {
+        let revision = inventoryRefresh.revision
         switch event {
         case let .switcherPressed(mode, direction):
             if environment.engine.activeSwitchSession == nil { shortcutPerformance.beginIfNeeded() }
             let priorInvocation = shortcutInvocationTask
             shortcutInvocationTask = Task { [weak self] in
                 await priorInvocation?.value
-                guard let self else { return }
-                self.run(await self.environment.engine.invokeSwitch(
-                    mode: mode,
-                    direction: direction
-                ))
+                guard let self, !Task.isCancelled, self.inventoryRefresh.isCurrent(revision) else { return }
+                let effects = await self.environment.engine.invokeSwitch(mode: mode, direction: direction)
+                guard self.inventoryRefresh.isCurrent(revision) else { return }
+                self.run(effects)
                 self.refreshPresentation()
             }
         case .holdModifiersReleased:
@@ -90,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             shortcutInvocationTask = nil
             Task { [weak self] in
                 await invocation?.value
-                guard let self else { return }
+                guard let self, self.inventoryRefresh.isCurrent(revision) else { return }
                 self.run(self.environment.engine.confirmSwitch())
                 self.refreshPresentation()
             }
@@ -100,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             shortcutInvocationTask = nil
             Task { [weak self] in
                 await invocation?.value
-                guard let self else { return }
+                guard let self, self.inventoryRefresh.isCurrent(revision) else { return }
                 self.run(self.environment.engine.receiveSession(.cancel(reason)))
             }
         }
@@ -128,6 +142,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 receive(.windowServerChanged(environment.windowServer.availability()))
             case let .setShortcutsEnabled(enabled):
                 setShortcutsEnabled(enabled)
+            case let .setMouseScrollReversalEnabled(enabled):
+                environment.engine.receiveMouseScrollStatus(environment.mouseScroll.setEnabled(enabled))
+                refreshPresentation()
             case .endActiveSession:
                 switcherPanelTask?.cancel()
                 switcherPanelTask = nil
@@ -141,6 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 environment.presentation.presentSettings(state: environment.engine.presentationState)
             case .requestAccessibility:
                 environment.accessibility.requestPermission()
+            case .requestMouseScrollPermission:
+                environment.mouseScroll.requestInputMonitoringPermission()
+                handle(.recheckReadiness)
             case .checkForUpdates:
                 environment.presentation.checkForUpdates()
             case let .openExternalPage(page):
@@ -168,10 +188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 dismissSwitcherPanelForConfirmation()
                 let transactionID = environment.engine.activeSwitchSession?.transactionID
                 Task { [weak self] in
-                    guard let self else { return }
+                    guard let self, let transactionID,
+                          self.environment.engine.isCurrentFocusTransaction(transactionID) else { return }
                     self.recordAdapterCall(.accessibility)
                     let succeeded = await self.environment.accessibility.deminimize(identity)
-                    guard let transactionID else { return }
                     self.receive(
                         .deminimizeCompleted(identity, succeeded: succeeded),
                         transactionID: transactionID
@@ -350,7 +370,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func focusTarget(_ identity: WindowIdentity, transactionID: UInt64) {
         Task { [weak self] in
-            guard let self else { return }
+            guard let self,
+                  self.environment.engine.isCurrentFocusTransaction(transactionID) else { return }
             self.recordAdapterCall(.skyLight)
             let succeeded = await self.environment.windowServer.focus(identity)
             self.receive(
@@ -361,9 +382,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func recoverFailedFocus(target: WindowIdentity, origin: WindowIdentity?) {
+        let revision = inventoryRefresh.revision
         Task { [weak self] in
             guard let self else { return }
-            if let origin {
+            if let origin, self.inventoryRefresh.isCurrent(revision), self.isMonitoringInventory,
+               self.environment.engine.activeSwitchSession == nil {
                 self.recordAdapterCall(.skyLight)
                 _ = await self.environment.windowServer.focus(origin)
             }
@@ -378,6 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var observed: FocusedWindow?
             for _ in 0..<4 {
                 try? await Task.sleep(for: .milliseconds(25))
+                guard self.environment.engine.isCurrentFocusTransaction(transactionID) else { return }
                 self.recordAdapterCall(.accessibility)
                 observed = await self.environment.accessibility.focusedWindow()
                 if observed == FocusedWindow(wid: identity.wid, pid: identity.pid) { break }
@@ -392,19 +416,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startInventoryObservation() {
         guard !isMonitoringInventory else { return }
         isMonitoringInventory = true
+        let revision = inventoryObservationRevision
         environment.windowServer.startMonitoringInventory { [weak self] event in
-            self?.receive(event)
+            guard let self, self.isMonitoringInventory, self.inventoryObservationRevision == revision else { return }
+            self.receive(event)
         }
         environment.accessibility.startMonitoringInventory { [weak self] event in
-            self?.receive(event)
+            guard let self, self.isMonitoringInventory, self.inventoryObservationRevision == revision else { return }
+            self.receive(event)
         }
         environment.workspace.startMonitoring { [weak self] event in
-            self?.receive(event)
+            guard let self, self.isMonitoringInventory, self.inventoryObservationRevision == revision else { return }
+            self.receive(event)
         }
 
         let facts = environment.workspace.runningApplications()
         Task { [weak self] in
-            guard let self else { return }
+            guard let self, self.isMonitoringInventory, self.inventoryObservationRevision == revision else { return }
             self.run(await self.environment.engine.receiveInventory(
                 .workspaceChanged(.snapshot(facts))
             ))
@@ -414,10 +442,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopInventoryObservation() {
         guard isMonitoringInventory else { return }
         isMonitoringInventory = false
-        inventoryRefreshTask?.cancel()
-        inventoryRefreshTask = nil
-        inventoryRefreshSequence &+= 1
-        inventoryRefreshCoalescer.reset()
+        inventoryObservationRevision &+= 1
+        inventoryRefresh.reset()
+        run(environment.engine.invalidateActiveSpace())
         semanticInvalidationTasks.values.forEach { $0.cancel() }
         semanticInvalidationTasks.removeAll()
         environment.windowServer.stopMonitoringInventory()
@@ -473,6 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func receive(_ event: WorkspaceApplicationEvent) {
+        let revision = inventoryObservationRevision
         if case let .launched(facts) = event {
             environment.accessibility.observeApplication(pid: facts.pid)
         }
@@ -481,6 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Task { [weak self] in
             guard let self else { return }
+            guard self.isMonitoringInventory, self.inventoryObservationRevision == revision else { return }
             self.run(await self.environment.engine.receiveInventory(.workspaceChanged(event)))
         }
         switch event {
@@ -492,66 +521,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func scheduleSemanticInvalidation(_ identity: WindowIdentity) {
-        semanticInvalidationTasks[identity]?.cancel()
+        guard isMonitoringInventory, semanticInvalidationTasks[identity] == nil else { return }
+        let revision = inventoryRefresh.revision
         semanticInvalidationTasks[identity] = Task { [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(75))
             } catch {
                 return
             }
-            guard let self, self.isMonitoringInventory else { return }
+            guard let self, self.isMonitoringInventory,
+                  self.inventoryRefresh.isCurrent(revision) else { return }
             self.semanticInvalidationTasks[identity] = nil
             self.run(await self.environment.engine.receiveInventory(.semanticsInvalidated(identity)))
         }
     }
 
     private func enrich(_ identities: [WindowIdentity]) {
-        for identity in identities {
+        let revision = inventoryRefresh.revision
+        let observationRevision = inventoryObservationRevision
+        // One app-window lookup per batch, rather than one enumeration per WID.
+        for group in Dictionary(grouping: identities, by: \.pid).values {
             Task { [weak self] in
-                guard let self else { return }
-                let patch = await self.environment.accessibility.enrichment(for: identity)
-                self.run(await self.environment.engine.receiveInventory(
-                    .semanticsChanged(identity, patch)
-                ))
+                guard let self, self.isMonitoringInventory,
+                      self.inventoryRefresh.isCurrent(revision),
+                      self.inventoryObservationRevision == observationRevision else { return }
+                await self.environment.accessibility.enrichments(for: group) { [weak self] identity, patch in
+                    guard let self, self.isMonitoringInventory, self.inventoryRefresh.isCurrent(revision),
+                          self.inventoryObservationRevision == observationRevision else { return }
+                    self.run(await self.environment.engine.receiveInventory(.semanticsChanged(identity, patch)))
+                }
             }
         }
     }
 
     private func scheduleInventoryRefresh(_ mode: InventoryRefreshMode) {
         guard isMonitoringInventory else { return }
-        inventoryRefreshCoalescer.request(mode)
-        inventoryRefreshSequence &+= 1
-        let sequence = inventoryRefreshSequence
-        inventoryRefreshTask?.cancel()
-        inventoryRefreshTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(75))
-            } catch {
-                return
-            }
-            guard let self, self.isMonitoringInventory,
-                  let mode = self.inventoryRefreshCoalescer.takePending() else { return }
-            self.recordAdapterCall(.skyLight)
-            let snapshot = await self.environment.windowServer.activeSpaceSnapshot()
-            guard !Task.isCancelled, self.isMonitoringInventory,
-                  sequence == self.inventoryRefreshSequence else { return }
-            guard let snapshot else {
-                self.receive(.windowServerChanged(.unavailable))
-                return
-            }
-            let event: InventoryEvent = mode == .replace
-                ? .replaceActiveSpace(snapshot)
-                : .reconcileActiveSpace(snapshot)
-            self.run(await self.environment.engine.receiveInventory(event))
-            self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
-            guard self.environment.windowServer.acceptInventorySnapshot(
-                snapshot,
-                generation: self.inventoryGeneration
-            ) else {
-                self.receive(.windowServerChanged(.unavailable))
-                return
-            }
+        if mode == .replace {
+            run(environment.engine.invalidateActiveSpace())
+            semanticInvalidationTasks.values.forEach { $0.cancel() }
+            semanticInvalidationTasks.removeAll()
+            environment.accessibility.cancelPendingEnrichment()
         }
+        inventoryRefresh.request(mode)
+    }
+
+    private func applyInventoryRefresh(
+        _ snapshot: WindowServerSnapshot?, mode: InventoryRefreshMode, revision: UInt64
+    ) async {
+        guard isMonitoringInventory, inventoryRefresh.isCurrent(revision) else { return }
+        guard let snapshot else {
+            receive(.windowServerChanged(.unavailable))
+            return
+        }
+        let event: InventoryEvent = mode == .replace
+            ? .replaceActiveSpace(snapshot) : .reconcileActiveSpace(snapshot)
+        let effects = await environment.engine.receiveInventory(event)
+        guard isMonitoringInventory, inventoryRefresh.isCurrent(revision) else { return }
+        let generation = await environment.engine.inventorySnapshot().generation
+        guard isMonitoringInventory, inventoryRefresh.isCurrent(revision) else { return }
+        inventoryGeneration = generation
+        guard environment.windowServer.acceptInventorySnapshot(snapshot, generation: generation) else {
+            receive(.windowServerChanged(.unavailable))
+            return
+        }
+        if mode == .replace { environment.engine.activeSpaceRefreshCompleted() }
+        run(effects)
     }
 
     private func refreshPresentation() {

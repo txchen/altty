@@ -41,10 +41,34 @@ private final class TestObservation: AccessibilityObservationRegistration {
 
 // Explicit system-adapter seam: synthetic IPC registrations, real background run loop.
 struct AccessibilityObservationTests {
+    @Test func processThatExitsDuringRegistrationIsImmediatelyReleased() async {
+        final class Liveness: @unchecked Sendable {
+            let lock = NSLock()
+            var alive = true
+            func read() -> Bool { lock.withLock { alive } }
+            func exit() { lock.withLock { alive = false } }
+        }
+        let life = Liveness()
+        let log = ObservationLog()
+        let worker = AccessibilityObservationWorker(isProcessRunning: { _ in life.read() }) { pid, _ in
+            let registration = TestObservation(pid: pid, log: log)
+            life.exit()
+            return registration
+        }
+        worker.observe(pid: 42) { _ in }
+        await worker.flush()
+        #expect(log.snapshot.creations[42] == 1)
+        #expect(log.snapshot.invalidations[42] == 1)
+        #expect(log.snapshot.active.isEmpty)
+        worker.observe(pid: 43) { _ in }
+        await worker.flush()
+        #expect(log.snapshot.creations[43] == nil)
+    }
+
     @Test @MainActor func terminatedPIDCanBeObservedAgainAndStoppingReleasesAllRegistrations() async {
         let log = ObservationLog()
-        let worker = AccessibilityObservationWorker { pid, _ in TestObservation(pid: pid, log: log) }
-        let adapter = SystemAccessibilityAdapter(observationWorker: worker)
+        let worker = AccessibilityObservationWorker(isProcessRunning: { $0 > 0 }) { pid, _ in TestObservation(pid: pid, log: log) }
+        let adapter = SystemAccessibilityAdapter(observationWorker: worker, isProcessRunning: { $0 > 0 })
         adapter.startMonitoringInventory { _ in }
         let fixturePID: ProcessID = 1_000_000
         adapter.observeApplication(pid: fixturePID)
@@ -68,7 +92,7 @@ struct AccessibilityObservationTests {
         let log = ObservationLog()
         let gate = DispatchSemaphore(value: 0)
         let (starts, continuation) = AsyncStream<Void>.makeStream()
-        let worker = AccessibilityObservationWorker { pid, _ in
+        let worker = AccessibilityObservationWorker(isProcessRunning: { $0 > 0 }) { pid, _ in
             continuation.yield(())
             // Safety bound makes a failing implementation finish rather than hang the suite.
             let completed = gate.wait(timeout: .now() + 2)
@@ -92,7 +116,7 @@ struct AccessibilityObservationTests {
 
     @Test func repeatedProcessChurnReturnsObserversToBaseline() async {
         let log = ObservationLog()
-        let worker = AccessibilityObservationWorker { pid, _ in TestObservation(pid: pid, log: log) }
+        let worker = AccessibilityObservationWorker(isProcessRunning: { $0 > 0 }) { pid, _ in TestObservation(pid: pid, log: log) }
         for pid: ProcessID in 1...1_000 {
             worker.observe(pid: pid) { _ in }
             worker.remove(pid: pid)

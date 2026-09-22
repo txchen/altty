@@ -24,3 +24,22 @@ Altty has two performance gates. Deterministic microbenchmarks run with the norm
 - A 1,000-event deterministic burst produces one pending adapter query. For the real ten-second 100-events/second run, compare adapter call counts and main-thread responsiveness; Accessibility calls must not scale linearly with raw events.
 
 The JSON schema is deliberately closed over hardware, OS, SHA, resource totals, adapter categories and named latency distributions. Neither instrumentation nor the collector accepts or records window titles.
+
+## Upstream-inspired reliability coverage (2026-09-22)
+
+`UpstreamReliabilityTests` exercises single-flight snapshots during 1,000 queued
+requests, replacement and stop/restart while OS calls are suspended, per-PID AX
+fairness and the reserved focus slot, cancellation without releasing physical
+capacity prematurely, one enumeration with resumable batch reads, invocation
+across a Space boundary, stable process identity and row-view reuse during 200
+selection changes. `AccessibilityObservationTests` also covers a process exiting
+during registration. Existing focus tests inject refused/false-success and stale
+transaction completions; existing resource tests cover 1,000 window lifecycles
+and 100 verified switches.
+
+These tests use injected delays and synthetic AX references. They do not establish
+real CPU/RSS gains or prove macOS Space-transition timing. For hardware acceptance,
+add immediate shortcut presses following Space changes, a deliberately stalled
+fixture app alongside a responsive app, continuous window-title changes, and
+quit/relaunch churn to the clean-hardware procedure above. A system AX call already
+executing cannot be forcibly cancelled; its result is rejected after invalidation.

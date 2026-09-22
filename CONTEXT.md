@@ -1,5 +1,13 @@
 # Domain glossary
 
+## Mouse Wheel Reversal
+
+An optional, globally applied reversal of mouse scrolling relative to macOS's
+current direction. It leaves trackpad scrolling alone using Scroll Reverser's
+recent-touch and momentum classifier. It is independent of Switcher Sessions,
+Exception Rules and SkyLight readiness, and requires Accessibility plus Input
+Monitoring. There are no speed, per-device or trackpad-direction settings.
+
 ## Switchable Window
 
 An individual macOS window on the Active Space that is eligible to appear in a switcher list. A window, rather than an application or a native tab within a window, is the fundamental selectable item.

@@ -5,7 +5,7 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 ## Modules
 
 - `Application`: app lifecycle, production dependency assembly and effect execution.
-- `Input`: replaceable shortcut registration and input events.
+- `Input`: replaceable shortcut registration, input events and mouse scroll reversal.
 - `WindowServer`: the only home for SkyLight declarations and private types.
 - `Accessibility`: trust state, semantic enrichment and focus prerequisites.
 - `Inventory`: the actor-isolated Active Space inventory and global MRU.
@@ -34,12 +34,13 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 ## Active Space Inventory
 
 - `CGSCopyManagedDisplaySpaces` contributes only each display's `Current Space`, including a currently presented fullscreen Space. `CGSCopyWindowsWithOptionsAndTags` supplies the authoritative front-to-back WIDs for those Spaces, including invisible/minimized candidates.
-- The SkyLight notification stream supplies create, destroy, focus, visibility/geometry and Space-change triggers. Snapshot bursts coalesce into one read-only reconciliation, stale query results are sequence-rejected, and there is no inventory polling timer.
-- AX title, role, subrole, minimized/fullscreen and transient facts are requested lazily for new or invalidated identities on detached work with a bounded AX messaging timeout. Per-window semantic bursts debounce and permit only one outstanding enrichment, with one follow-up when facts changed during that read. Unknown or stale qualification facts fail closed.
+- The SkyLight notification stream supplies create, destroy, focus, visibility/geometry and Space-change triggers. Snapshot bursts use a fixed 75 ms coalescing window, one physical query and one merged follow-up. Ordinary events do not continually postpone or reject progress. Space replacement and monitoring epochs reject obsolete answers, even when an old OS call finishes after stop/restart. There is no inventory polling timer.
+- AX title, role, subrole, minimized/fullscreen and transient facts are requested lazily for new or invalidated identities on bounded Dispatch workers. At most four query jobs run, at most one per PID; background jobs use at most three slots, reserving capacity for interactive focus work. An app-window enumeration is shared by a batch, traversal resumes across 250 ms elapsed-time slices, and each slice publishes completed patches before continuing. Individual IPC timeouts are capped by the remaining slice budget. Per-window semantic bursts use a fixed 75 ms window and permit only one outstanding enrichment, with one follow-up when facts changed during that read. Unknown or stale qualification facts fail closed.
 - Session liveness uses the authoritative WID/PID/generation set, separately from the qualified candidate list. Temporary AX staleness cannot remove a captured live candidate or change its selection.
 - A SkyLight focus notification for an undiscovered WID requests reconciliation and retains only the latest focus hint. An accepted snapshot validates its identity before replay; newer focus, destruction, Space changes, monitoring stop or absence from the snapshot discard obsolete hints.
-- AX notification registration, window-ID reads in callbacks, and observer removal share a dedicated sleeping run loop with bounded messaging timeouts. Workspace termination removes that PID's observer; per-registration tokens reject queued callbacks after termination, PID reuse or monitoring restart. The main thread never waits for AX registration or cleanup.
+- AX notification registration, window-ID reads in callbacks, and observer removal share a dedicated sleeping run loop with bounded messaging timeouts. Kernel liveness is checked both before and after asynchronous observer registration. Workspace retains notification-source identities when process identifiers disappear and rejects obsolete termination after PID reuse. Termination cancels queued AX work and removes that PID's observer; per-registration tokens reject queued callbacks after termination, PID reuse or monitoring restart. The main thread never waits for AX registration or cleanup.
 - Workspace launch, termination, activation and hidden/unhidden notifications update only application-owned fields. Hidden-app and minimized real windows remain eligible.
+- The first Active Space change notification immediately ends the Switcher Session and blocks new invocations against the old inventory, including invocations already awaiting a snapshot. Switching resumes after a current replacement is accepted and subscribed. Expensive discovery still coalesces; no old-Space fallback is provided during the transition.
 - Active Space replacement increments the inventory generation and discards the prior records. Within a generation, events must match WID and PID, and a newly created/reused WID starts without prior metadata or MRU. Cold start keeps visible candidates in front-to-back order and defers minimized/hidden candidates with deterministic WID ordering.
 
 ## Interactive Switcher Sessions
@@ -51,9 +52,32 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 - Session rows remain stable under ordinary inventory changes and new windows. Destroyed candidates are removed, with selection advancing safely, and generation changes fail closed.
 - A different mode shortcut cancels an unconfirmed session; once exact-WID confirmation begins, that transaction finishes before a later shortcut press can start a fresh session and snapshot. Modes never transition in place.
 - Every confirmation has a monotonic transaction identity. Asynchronous deminimize, focus and postcondition callbacks must match it, so delayed results from a prior attempt cannot advance or fail a newer attempt for the same window identity.
+- Panel updates preserve existing row views for selection-only changes, reload only changed content rows, and recompute size only for structural or presentation-preference changes. Selected actions continue to resolve by WindowIdentity.
 - No thumbnails or live focus previews are supported by design.
 
-## Shortcut Settings
+## Mouse Scroll Reversal
+
+- General settings schema v4 adds `reverseMouseWheel`, default off. Versions 1–3
+  migrate with it disabled. Runtime changes occur only after successful persistence.
+- The engine gates reversal on Accessibility independently of SkyLight and
+  Exceptions. The adapter additionally preflights Input Monitoring, without
+  prompting; only the explicit permission action requests access.
+- `SystemMouseScrollAdapter` owns separate passive gesture and active scroll
+  session taps on the main run loop. Disable, failed startup, permission loss,
+  readiness recheck and application termination release both. Tap timeout
+  attempts recovery; failed recovery reports an unavailable state.
+- `ScrollInputClassifier` adapts Scroll Reverser's recent multi-touch (222 ms),
+  ordinary-scroll timeout (333 ms) and momentum rules. Trackpad events pass
+  through; mouse events reverse both axes in place, without posting events.
+- All line, fixed-point and point deltas are captured before mutation, then
+  written in that order. `MouseScrollHIDAccess` isolates runtime-resolved
+  CoreGraphics/IOKit SPI to update the underlying HID axes for Safari and similar
+  clients. Missing symbols leave reversal unavailable, without affecting switching.
+- Apache-2.0 license and NOTICE accompany the source and packaged app. Synthetic
+  event, classifier, engine, migration and presentation tests do not capture live
+  input; physical mouse/trackpad validation remains a separate manual check.
+
+## Persisted Shortcut Settings
 
 - `ShortcutPair` contains exactly one base binding per switcher mode. Validation requires a main key and Option, Control or Command, reserves Shift for reverse navigation and rejects duplicate mode bindings.
 - `SystemInputAdapter` registers forward and derived Shift-reverse chords under transaction-specific IDs. Every proposed chord is registered before superseded registrations are retired; any Carbon or monitor failure rolls back the proposal and leaves the prior pair intact.

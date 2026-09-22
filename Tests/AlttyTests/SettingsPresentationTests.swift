@@ -5,6 +5,37 @@ import Testing
 
 @MainActor
 struct SettingsPresentationTests {
+    @Test func mouseScrollCheckboxPreservesOtherSettingsAndExplainsPermissionRecovery() {
+        _ = NSApplication.shared
+        var commands: [SwitcherCommand] = []
+        let controller = SettingsWindowController(exceptions: RecordingExceptionsAdapter()) {
+            commands.append($0)
+        }
+        var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .unavailable)
+        state.generalSettings.current = GeneralSettings(launchAtLogin: true,
+            listPresentation: .init(visibleRowCount: 8, density: .comfortable))
+        controller.update(state: state)
+        #expect(controller.observedState.mouseScrollControlTitle == "Reverse mouse wheel direction")
+        #expect(controller.observedState.mouseScrollMessage == nil)
+        controller.toggleMouseScrollReversal()
+        let enabled = GeneralSettings(launchAtLogin: true,
+            listPresentation: .init(visibleRowCount: 8, density: .comfortable), reverseMouseWheel: true)
+        #expect(commands == [.replaceGeneralSettings(enabled)])
+        state.generalSettings.current = enabled
+        state.generalSettings.mouseScrollStatus = .inputMonitoringRequired
+        controller.update(state: state)
+        #expect(controller.observedState.showsInputMonitoringRecovery)
+        #expect(controller.observedState.mouseScrollMessage?.contains("Input Monitoring") == true)
+        state.generalSettings.mouseScrollStatus = .active
+        controller.update(state: state)
+        #expect(!controller.observedState.showsInputMonitoringRecovery)
+        #expect(controller.observedState.mouseScrollMessage == nil)
+        controller.toggleMouseScrollReversal()
+        #expect(commands.last == .replaceGeneralSettings(GeneralSettings(launchAtLogin: true,
+            listPresentation: .init(visibleRowCount: 8, density: .comfortable))))
+        controller.close()
+    }
+
     @Test func versionTwoSettingsMigrateSequentiallyToLaunchAndPresentationDefaults() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)
@@ -33,7 +64,7 @@ struct SettingsPresentationTests {
             snapshot: .defaults,
             warning: nil
         ))
-        #expect(SettingsSnapshot.currentVersion == 3)
+        #expect(SettingsSnapshot.currentVersion == 4)
         #expect(SettingsSnapshot.defaults.general == .defaults)
         try? FileManager.default.removeItem(at: directory)
     }

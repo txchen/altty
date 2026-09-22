@@ -25,12 +25,23 @@ struct GeneralSettings: Codable, Equatable, Sendable {
 
     let launchAtLogin: Bool
     let listPresentation: ListPresentationPreferences
+    let reverseMouseWheel: Bool
+
+    init(
+        launchAtLogin: Bool,
+        listPresentation: ListPresentationPreferences,
+        reverseMouseWheel: Bool = false
+    ) {
+        self.launchAtLogin = launchAtLogin
+        self.listPresentation = listPresentation
+        self.reverseMouseWheel = reverseMouseWheel
+    }
 
     var isValid: Bool { listPresentation.isValid }
 }
 
 struct SettingsSnapshot: Codable, Equatable, Sendable {
-    static let currentVersion = 3
+    static let currentVersion = 4
     static let defaults = SettingsSnapshot(
         shortcuts: .defaults,
         exceptionRules: [],

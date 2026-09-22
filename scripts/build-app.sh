@@ -29,6 +29,7 @@ swift build -c release --arch arm64 ${BUILD_OPTIONS[@]+"${BUILD_OPTIONS[@]}"}
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+cp -R "$ROOT_DIR/Resources/ThirdParty" "$RESOURCES_DIR/ThirdParty"
 cp "$ROOT_DIR/.build/arm64-apple-macosx/release/Altty" "$MACOS_DIR/Altty"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS_DIR/Info.plist"

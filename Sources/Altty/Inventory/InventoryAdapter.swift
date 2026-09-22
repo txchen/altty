@@ -45,6 +45,10 @@ enum WindowQualification {
 }
 
 struct WindowSemanticPatch: Equatable, Sendable {
+    static let unavailable = WindowSemanticPatch(
+        title: .unavailable, role: .unavailable, subrole: .unavailable,
+        isMinimized: .unavailable, isFullscreen: .unavailable, isTransient: .unavailable
+    )
     var title: FieldUpdate<String> = .unchanged
     var role: FieldUpdate<String> = .unchanged
     var subrole: FieldUpdate<String> = .unchanged

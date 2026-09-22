@@ -40,9 +40,14 @@ final class AccessibilityObservationWorker: @unchecked Sendable {
     private let runLoop: CFRunLoop
     private let state = State()
     private let factory: Factory
+    private let isProcessRunning: @Sendable (ProcessID) -> Bool
 
-    init(factory: @escaping Factory) {
+    init(
+        isProcessRunning: @escaping @Sendable (ProcessID) -> Bool = ProcessLiveness.isRunning,
+        factory: @escaping Factory
+    ) {
         self.factory = factory
+        self.isProcessRunning = isProcessRunning
         let startup = Startup()
         let thread = Thread {
             let loop = CFRunLoopGetCurrent()!
@@ -75,9 +80,14 @@ final class AccessibilityObservationWorker: @unchecked Sendable {
         onEvent: @escaping @Sendable (AccessibilityInventoryEvent) -> Void,
         onFailure: @escaping @Sendable () -> Void = {}
     ) {
-        perform { [state, factory] in
+        perform { [state, factory, isProcessRunning] in
             guard state.registrations[pid] == nil else { return }
-            guard let registration = factory(pid, onEvent) else {
+            guard isProcessRunning(pid), let registration = factory(pid, onEvent) else {
+                onFailure()
+                return
+            }
+            guard isProcessRunning(pid) else {
+                registration.invalidate()
                 onFailure()
                 return
             }

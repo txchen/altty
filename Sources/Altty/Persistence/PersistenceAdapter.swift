@@ -23,6 +23,17 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
     }
 
     private struct VersionThreeSettings: Decodable {
+        struct General: Decodable {
+            let launchAtLogin: Bool
+            let listPresentation: ListPresentationPreferences
+        }
+
+        let shortcuts: ShortcutPair
+        let exceptionRules: [LossyExceptionRule]
+        let general: General
+    }
+
+    private struct VersionFourSettings: Decodable {
         let shortcuts: ShortcutPair
         let exceptionRules: [LossyExceptionRule]
         let general: GeneralSettings
@@ -71,17 +82,21 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
                 )
             }
 
-            let current: VersionThreeSettings
+            let current: VersionFourSettings
             switch version {
             case 1:
                 let settings = try decoder.decode(VersionOneSettings.self, from: data)
-                current = migrateToVersionThree(migrateToVersionTwo(settings))
+                current = migrateToVersionFour(migrateToVersionThree(migrateToVersionTwo(settings)))
             case 2:
-                current = migrateToVersionThree(
+                current = migrateToVersionFour(migrateToVersionThree(
                     try decoder.decode(VersionTwoSettings.self, from: data)
+                ))
+            case 3:
+                current = migrateToVersionFour(
+                    try decoder.decode(VersionThreeSettings.self, from: data)
                 )
             default:
-                current = try decoder.decode(VersionThreeSettings.self, from: data)
+                current = try decoder.decode(VersionFourSettings.self, from: data)
             }
 
             guard current.shortcuts.validationError == nil else {
@@ -148,7 +163,19 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
         VersionThreeSettings(
             shortcuts: settings.shortcuts,
             exceptionRules: settings.exceptionRules,
-            general: .defaults
+            general: .init(launchAtLogin: false, listPresentation: .defaults)
+        )
+    }
+
+    private func migrateToVersionFour(_ settings: VersionThreeSettings) -> VersionFourSettings {
+        VersionFourSettings(
+            shortcuts: settings.shortcuts,
+            exceptionRules: settings.exceptionRules,
+            general: GeneralSettings(
+                launchAtLogin: settings.general.launchAtLogin,
+                listPresentation: settings.general.listPresentation,
+                reverseMouseWheel: false
+            )
         )
     }
 
