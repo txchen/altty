@@ -327,10 +327,11 @@ struct ShortcutConfigurationTests {
         let engine = SwitcherEngine(shortcuts: persisted)
         let error = ShortcutConfigurationError.unavailableShortcut(.allWindows)
 
+        let recovered = SettingsSnapshot(shortcuts: .defaults, exceptionRules: [])
         #expect(engine.receiveShortcutRegistration(.recoveredWithDefaults(error)) == [
-            .persistSettings(.defaults),
+            .persistSettings(recovered),
         ])
-        #expect(engine.receiveSettingsPersistence(.saved(.defaults)) == [])
+        #expect(engine.receiveSettingsPersistence(.saved(recovered)) == [])
         #expect(engine.presentationState.shortcutSettings.current == .defaults)
         #expect(engine.presentationState.shortcutSettings.recoveryWarning != nil)
     }

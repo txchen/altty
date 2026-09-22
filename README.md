@@ -154,3 +154,19 @@ still need hardware validation. License and attribution ship in the app's
 - General, Shortcuts, management-first Exceptions and About settings destinations
 - Replaceable system-adapter boundaries assembled around `SwitcherEngine`
 - No thumbnails and no Screen Recording permission
+
+## Default exceptions
+
+Fresh settings include fullscreen shortcut pass-through for Screen Sharing,
+Microsoft Remote Desktop / Windows App, TeamViewer, VirtualBox, Parallels,
+Citrix Viewer (both bundle IDs), Amazon DCV, VMware Fusion and UTM. These apps'
+windows remain visible in Altty; only their foreground fullscreen sessions receive
+shortcuts directly. Parallels uses the `com.parallels.` prefix; other entries use
+exact bundle identifiers. McAfee's Safari helper windows are hidden.
+
+The recommendations follow [AltTab v11.7.1's default exceptions](https://github.com/lwouis/alt-tab-macos/blob/v11.7.1/src/preferences/Preferences.swift).
+Altty does not need AltTab's windowless-Finder rule because it only lists real windows.
+All entries can be edited or deleted in Settings → Exceptions. Saved lists, including
+an intentionally empty list and lists migrated from older versions, are preserved.
+These defaults are also used by the existing safe-defaults recovery path when a
+settings file cannot be loaded; the original invalid file is preserved for diagnosis.

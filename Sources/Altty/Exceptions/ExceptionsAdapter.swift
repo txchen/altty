@@ -40,6 +40,29 @@ struct ExceptionRuleIdentity: Codable, Equatable, Hashable, Sendable {
 }
 
 struct ExceptionRule: Codable, Equatable, Sendable {
+    /// Initial recommendations, not an overlay on the user's saved rules.
+    /// Adapted from AltTab v11.7.1 defaultExceptions; Altty has no windowless entries.
+    static let defaults: [ExceptionRule] = {
+        let remoteApplications = [
+            "com.apple.ScreenSharing",
+            "com.microsoft.rdc.macos",
+            "com.teamviewer.TeamViewer",
+            "org.virtualbox.app.VirtualBoxVM",
+            "com.parallels.",
+            "com.citrix.XenAppViewer",
+            "com.citrix.receiver.icaviewer.mac",
+            "com.nicesoftware.dcvviewer",
+            "com.vmware.fusion",
+            "com.utmapp.UTM",
+        ]
+        return remoteApplications.map { identifier in
+            ExceptionRule(bundleIdentifier: identifier,
+                matchType: identifier == "com.parallels." ? .prefix : .exact,
+                hide: false, ignore: .whenFullscreen)!
+        } + [ExceptionRule(bundleIdentifier: "com.McAfee.McAfeeSafariHost",
+            matchType: .exact, hide: true, ignore: .none)!]
+    }()
+
     let bundleIdentifier: String
     let matchType: ExceptionMatchType
     let hide: Bool

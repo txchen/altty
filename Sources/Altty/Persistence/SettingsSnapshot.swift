@@ -44,7 +44,7 @@ struct SettingsSnapshot: Codable, Equatable, Sendable {
     static let currentVersion = 4
     static let defaults = SettingsSnapshot(
         shortcuts: .defaults,
-        exceptionRules: [],
+        exceptionRules: ExceptionRule.defaults,
         general: .defaults
     )
 

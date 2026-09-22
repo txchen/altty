@@ -4,6 +4,35 @@ import Testing
 
 @MainActor
 struct ExceptionRulesTests {
+    @Test func recommendedRemoteRulesOnlyPassThroughWhenFullscreenAndNeverHideWindows() {
+        let policy = ExceptionPolicy(rules: ExceptionRule.defaults)
+        for identifier in ["com.apple.ScreenSharing", "com.microsoft.rdc.macos",
+            "com.teamviewer.TeamViewer", "org.virtualbox.app.VirtualBoxVM", "com.parallels.desktop.console",
+            "com.citrix.XenAppViewer", "com.citrix.receiver.icaviewer.mac", "com.nicesoftware.dcvviewer",
+            "com.vmware.fusion", "com.utmapp.UTM"] {
+            #expect(!policy.disposition(for: identifier).hidesWindows)
+            #expect(policy.shortcutsShouldBeEnabled(in: .init(bundleIdentifier: identifier, windowIsFullscreen: true)) == false)
+            #expect(policy.shortcutsShouldBeEnabled(in: .init(bundleIdentifier: identifier, windowIsFullscreen: false)) == true)
+        }
+        #expect(policy.disposition(for: "com.parallelsOther.app") == .none)
+        #expect(policy.disposition(for: "com.utmapp.UTM.other") == .none)
+        #expect(policy.disposition(for: "com.apple.finder") == .none)
+        #expect(policy.disposition(for: "com.McAfee.McAfeeSafariHost") == .init(hidesWindows: true, ignore: .none))
+    }
+
+    @Test func defaultsSeedFreshSettingsButNeverReplaceSavedRulesOrRestoreDeletedRules() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = FileSettingsPersistenceAdapter(settingsURL: directory.appending(path: "settings.json"))
+        #expect(persistence.loadSettings().snapshot.exceptionRules == ExceptionRule.defaults)
+        let edited = [try #require(ExceptionRule(bundleIdentifier: "com.utmapp.UTM",
+            matchType: .exact, hide: true, ignore: .none))]
+        for rules in [edited, []] {
+            try persistence.saveSettings(SettingsSnapshot(shortcuts: .defaults, exceptionRules: rules))
+            #expect(persistence.loadSettings().snapshot.exceptionRules == rules)
+        }
+    }
+
     @Test func exactAndPrefixRulesCombineByUnionAndStrongestIgnoreRegardlessOfOrder() throws {
         let prefix = try #require(ExceptionRule(
             bundleIdentifier: "com.example.",
@@ -303,7 +332,7 @@ struct ExceptionRulesTests {
         try Data(versionOneJSON.utf8).write(to: url)
 
         #expect(persistence.loadSettings() == SettingsLoadResult(
-            snapshot: .defaults,
+            snapshot: SettingsSnapshot(shortcuts: .defaults, exceptionRules: []),
             warning: nil
         ))
         try? FileManager.default.removeItem(at: directory)

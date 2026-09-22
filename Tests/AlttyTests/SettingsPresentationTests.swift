@@ -61,7 +61,7 @@ struct SettingsPresentationTests {
         try Data(versionTwoJSON.utf8).write(to: url)
 
         #expect(persistence.loadSettings() == SettingsLoadResult(
-            snapshot: .defaults,
+            snapshot: SettingsSnapshot(shortcuts: .defaults, exceptionRules: []),
             warning: nil
         ))
         #expect(SettingsSnapshot.currentVersion == 4)
