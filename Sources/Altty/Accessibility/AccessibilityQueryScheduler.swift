@@ -1,6 +1,7 @@
 import Foundation
 
-/// Blocking AX IPC runs on Dispatch workers, never the Swift cooperative pool.
+/// Remote AX IPC runs on Dispatch workers, never the Swift cooperative pool.
+/// Local AX calls enter AppKit directly and must stay on the main actor.
 /// Background scans leave one slot for focus, and no PID can occupy every slot.
 @MainActor
 final class AccessibilityQueryScheduler {
@@ -41,6 +42,11 @@ final class AccessibilityQueryScheduler {
         operation: @escaping @Sendable () -> Value
     ) async -> Value? {
         guard !Task.isCancelled else { return nil }
+        if pid == ProcessInfo.processInfo.processIdentifier {
+            // AX dispatches in-process actions synchronously into AppKit instead
+            // of IPC. In particular AXRaise calls NSWindow.makeKeyAndOrderFront.
+            return autoreleasepool(invoking: operation)
+        }
         return await withCheckedContinuation { continuation in
             let job = Job(pid: pid, priority: priority) { continuation.resume(returning: nil) }
             let id = job.id

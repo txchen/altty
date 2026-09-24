@@ -41,3 +41,11 @@ Final verification: 139 tests / 20 suites passed; 36 visual comparisons passed;
 arm64 candidate `.build/settings-release/Altty.app` build 2026092304 passed release
 verification. Includes the prior first-frame preparation fix. Running app and
 `dist/` were not replaced; system permission QA remains pending on the candidate.
+
+## Icon follow-up
+
+The single-window icon did not convey window switching strongly enough. Replaced
+it with offset overlapping windows: three titlebar dots on the front window and
+only the exposed top/right outline of the rear window. Checked 18/36/108 px native
+rendering in both appearances; visual comparison changed only the four About
+images where this shared icon appears. Candidate build 2026092305.

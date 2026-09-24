@@ -21,6 +21,8 @@ The specification must settle user behavior, window discovery and focus semantic
 
 ## Decisions so far
 
+- [41 — self-window crash](issues/41-fix-switching-to-own-settings-window.md): in-process AX calls enter AppKit directly and must run on MainActor; remote AX remains isolated on workers.
+
 - [40 — settings and menu polish](issues/40-polish-settings-and-menu.md): one shared mouse reversal preference in menu and Settings; Homebrew-managed updates; card layouts and native permission requests with exact-bundle Finder recovery.
 
 - [39 — first-frame readiness](issues/39-prepare-switcher-content-before-ordering.md): prepare and draw the final viewport before ordering the panel; log preparation duration. Missing pre-order cells reproduced; original intermittent compositor symptom still requires field observation.

@@ -78,3 +78,11 @@ historical, not an ongoing failing gate; its environmental cause was not establi
 Settings visual coverage also includes Shortcuts, About and the mouse Input
 Monitoring recovery state, bringing the fixture total to 36 PNGs. Permission dialogs
 remain a user-driven QA gate; the visual fixture does not grant or request access.
+
+## Altty-owned window focus
+
+Run `ALTTY_SWIFT_BUILD_SYSTEM=native scripts/check-self-window-focus.sh` to check
+the local AppKit path with two disposable windows. It checks 20 exact focus
+sequences and four minimized restorations, then restores the previously focused
+window. Before the local-PID scheduler fix, the same production AXRaise call
+terminated the probe with SIGTRAP. This check is separate from remote-app focus.

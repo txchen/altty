@@ -17,7 +17,7 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 1. `AppDelegate` assembles the production adapters and sends `.launch` to `SwitcherEngine`.
 2. The engine requests Accessibility and WindowServer capability checks as effects.
 3. Shortcuts remain unregistered until both dependencies report ready. The configured pair is then registered as one transaction; a conflict leaves the complete previous pair active.
-4. Readiness starts the event-driven inventory: SkyLight replaces or reconciles the Active Space WID set, AX lazily enriches requested identities off-main, and Workspace owns application lifecycle/visibility facts.
+4. Readiness starts the event-driven inventory: SkyLight replaces or reconciles the Active Space WID set, AX lazily enriches remote identities off-main and its own windows on MainActor, and Workspace owns application lifecycle/visibility facts.
 5. Adapter callbacks become immutable inventory events. `WindowInventory` validates WID, PID and generation before updating actor-isolated records, and `SwitcherEngine` remains the observable test seam.
 6. AppKit Presentation renders immutable engine state in the menu, Settings shell and non-activating switcher panel.
 
@@ -35,7 +35,7 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 
 - `CGSCopyManagedDisplaySpaces` contributes only each display's `Current Space`, including a currently presented fullscreen Space. `CGSCopyWindowsWithOptionsAndTags` supplies the authoritative front-to-back WIDs for those Spaces, including invisible/minimized candidates.
 - The SkyLight notification stream supplies create, destroy, focus, visibility/geometry and Space-change triggers. Snapshot bursts use a fixed 75 ms coalescing window, one physical query and one merged follow-up. Ordinary events do not continually postpone or reject progress. Space replacement and monitoring epochs reject obsolete answers, even when an old OS call finishes after stop/restart. There is no inventory polling timer.
-- AX title, role, subrole, minimized/fullscreen and transient facts are requested lazily for new or invalidated identities on bounded Dispatch workers. At most four query jobs run, at most one per PID; background jobs use at most three slots, reserving capacity for interactive focus work. An app-window enumeration is shared by a batch, traversal resumes across 250 ms elapsed-time slices, and each slice publishes completed patches before continuing. Individual IPC timeouts are capped by the remaining slice budget. Per-window semantic bursts use a fixed 75 ms window and permit only one outstanding enrichment, with one follow-up when facts changed during that read. Unknown or stale qualification facts fail closed.
+- AX title, role, subrole, minimized/fullscreen and transient facts are requested lazily for new or invalidated identities. Remote identities use bounded Dispatch workers; Altty-owned windows use MainActor because local AX calls enter AppKit directly. At most four remote query jobs run, at most one per PID; background jobs use at most three slots, reserving capacity for interactive focus work. An app-window enumeration is shared by a batch, traversal resumes across 250 ms elapsed-time slices, and each slice publishes completed patches before continuing. Individual IPC timeouts are capped by the remaining slice budget. Per-window semantic bursts use a fixed 75 ms window and permit only one outstanding enrichment, with one follow-up when facts changed during that read. Unknown or stale qualification facts fail closed.
 - Session liveness uses the authoritative WID/PID/generation set, separately from the qualified candidate list. Temporary AX staleness cannot remove a captured live candidate or change its selection.
 - A SkyLight focus notification for an undiscovered WID requests reconciliation and retains only the latest focus hint. An accepted snapshot validates its identity before replay; newer focus, destruction, Space changes, monitoring stop or absence from the snapshot discard obsolete hints.
 - AX notification registration, window-ID reads in callbacks, and observer removal share a dedicated sleeping run loop with bounded messaging timeouts. Kernel liveness is checked both before and after asynchronous observer registration. Workspace retains notification-source identities when process identifiers disappear and rejects obsolete termination after PID reuse. Termination cancels queued AX work and removes that PID's observer; per-registration tokens reject queued callbacks after termination, PID reuse or monitoring restart. The main thread never waits for AX registration or cleanup.
@@ -119,3 +119,8 @@ The app never edits TCC or grants permission itself.
 Settings uses scrollable grouped cards. About reports the running OS version;
 the macOS 15 deployment target is not presented as the current OS. Updates are
 managed by Homebrew; there is no in-app update command or release-page updater.
+
+Local AX queries are not remote IPC: AX can call AppKit synchronously for Altty's
+own PID. AccessibilityQueryScheduler executes those jobs on MainActor, including
+raise, deminimize and focus readback. Remote jobs retain worker isolation and
+bounded admission. `scripts/check-self-window-focus.sh` is the real crash gate.

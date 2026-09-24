@@ -167,6 +167,17 @@ struct UpstreamReliabilityTests {
         scheduler.reset()
     }
 
+    @Test func selfAXQueriesStayOnMainWhileRemoteQueriesUseWorkers() async {
+        let scheduler = AccessibilityQueryScheduler()
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        for priority: AccessibilityQueryScheduler.Priority in [.background, .interactive] {
+            #expect(await scheduler.run(pid: ownPID, priority: priority) { Thread.isMainThread } == true)
+            #expect(await scheduler.run(pid: ownPID + 1, priority: priority) { Thread.isMainThread } == false)
+        }
+        #expect(scheduler.runningJobCount == 0)
+        #expect(scheduler.pendingJobCount == 0)
+    }
+
     @Test func blockedAppCannotOccupyOtherAppsOrTheReservedFocusSlot() async {
         let scheduler = AccessibilityQueryScheduler(capacity: 3)
         let stalled = DispatchSemaphore(value: 0)
