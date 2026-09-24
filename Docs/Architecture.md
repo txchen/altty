@@ -47,7 +47,7 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
 
 - The configured All-Windows shortcut (Option-Tab by default) immediately snapshots the Active Space candidate order, invocation PID, shortcut description and temporary selection. Quick release begins verified exact-WID focus without presenting UI.
 - The configured Current-App shortcut (Option-Grave by default) snapshots the frontmost PID before presentation and filters the same global MRU to that owner for the entire Current-App session.
-- A session that remains active for 125 ms presents a compact vertical list. Repeated Tab and Shift-Tab, mouse hover and wheel update only the temporary selection; release or click confirms, while Escape, outside click and lost interaction context cancel.
+- A session that remains active for 100 ms presents a compact vertical list. Repeated Tab, a Shift press (backward), Shift-Tab, mouse hover and wheel update only the temporary selection; release or click confirms, while Escape, outside click and lost interaction context cancel.
 - A session remains active while any configured Option, Control or Command modifier is held. Shortcut edits remain pending until that session ends, then atomically replace and persist the pair.
 - Session rows remain stable under ordinary inventory changes and new windows. Destroyed candidates are removed, with selection advancing safely, and generation changes fail closed.
 - A different mode shortcut cancels an unconfirmed session; once exact-WID confirmation begins, that transaction finishes before a later shortcut press can start a fresh session and snapshot. Modes never transition in place.
@@ -106,3 +106,16 @@ blacklist or alternate focus path is introduced.
 
 See [qa-fixtures.md](qa-fixtures.md) for pixel baselines, the real hostile app and
 explicit physical validation boundaries.
+
+## Menu, settings and updates
+
+The menu bar exposes readiness, conditional Accessibility recovery, a checked
+mouse reversal toggle, Settings and Quit. Both mouse controls send the same
+persisted GeneralSettings command. Explicitly enabling reversal requests Input
+Monitoring if missing; returning to the application refreshes readiness. The
+recovery UI can reveal the running bundle in Finder for manual system enrollment.
+The app never edits TCC or grants permission itself.
+
+Settings uses scrollable grouped cards. About reports the running OS version;
+the macOS 15 deployment target is not presented as the current OS. Updates are
+managed by Homebrew; there is no in-app update command or release-page updater.

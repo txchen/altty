@@ -271,23 +271,6 @@ struct SettingsPresentationTests {
         panel.dismiss()
     }
 
-    @Test func checkForUpdatesOnlyOpensTheLatestReleasesPageOnExplicitAction() {
-        var openedURLs: [URL] = []
-        let action = GitHubReleaseUpdateAction { url in
-            openedURLs.append(url)
-            return true
-        }
-
-        #expect(openedURLs.isEmpty)
-        action.checkForUpdates()
-        #expect(openedURLs == [URL(string: "https://github.com/txchen/altty/releases/latest")!])
-
-        let engine = SwitcherEngine()
-        #expect(engine.send(.openExternalPage(.project)) == [.openExternalPage(.project)])
-        #expect(engine.send(.openExternalPage(.support)) == [.openExternalPage(.support)])
-        #expect(engine.send(.checkForUpdates) == [.checkForUpdates])
-    }
-
     @Test func settingsExposeAllPanesInlineStateKeyboardFocusAndAboutActions() {
         _ = NSApplication.shared
         let applications = RecordingExceptionsAdapter()
@@ -330,12 +313,10 @@ struct SettingsPresentationTests {
         controller.replaceGeneralSettings(proposed)
         controller.performAboutAction(.project)
         controller.performAboutAction(.support)
-        controller.performAboutAction(.checkForUpdates)
         #expect(commands == [
             .replaceGeneralSettings(proposed),
             .openExternalPage(.project),
             .openExternalPage(.support),
-            .checkForUpdates,
         ])
         controller.close()
     }
@@ -360,6 +341,29 @@ struct SettingsPresentationTests {
         ])
     }
 
+    @Test func menuMouseTogglePreservesOtherSettingsAndTracksTheirCurrentValue() {
+        _ = NSApplication.shared
+        var commands: [SwitcherCommand] = []
+        let menu = MenuBarController { commands.append($0) }
+        menu.install()
+        defer { menu.uninstall() }
+        var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .available)
+        let original = GeneralSettings(launchAtLogin: true,
+            listPresentation: .init(visibleRowCount: 8, density: .comfortable), reverseMouseWheel: false)
+        state.generalSettings.current = original
+        menu.update(state: state)
+        #expect(!menu.observedState.mouseScrollReversed)
+        menu.toggleMouseScroll()
+        let enabled = GeneralSettings(launchAtLogin: true, listPresentation: original.listPresentation, reverseMouseWheel: true)
+        #expect(commands == [.replaceGeneralSettings(enabled)])
+        state.generalSettings.current = enabled
+        menu.update(state: state)
+        #expect(menu.observedState.mouseScrollReversed)
+        #expect(menu.observedState.actionTitles == ["Reverse Mouse Scrolling", "Settings…", "Quit Altty"])
+        menu.toggleMouseScroll()
+        #expect(commands.last == .replaceGeneralSettings(original))
+    }
+
     @Test func menuBarShowsStatusAndOnlyProductionLevelActions() {
         _ = NSApplication.shared
         let menu = MenuBarController { _ in }
@@ -376,10 +380,9 @@ struct SettingsPresentationTests {
         #expect(menu.observedState.readinessTitle == "Accessibility permission required")
         #expect(menu.observedState.showsAccessibilityAction)
         #expect(menu.observedState.actionTitles == [
-            "Check Readiness",
             "Grant Accessibility Permission…",
+            "Reverse Mouse Scrolling",
             "Settings…",
-            "Check for Updates…",
             "Quit Altty",
         ])
         #expect(!menu.observedState.actionTitles.contains { $0.contains("Exception") })

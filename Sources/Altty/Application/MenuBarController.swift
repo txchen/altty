@@ -5,6 +5,7 @@ struct MenuBarObservedState: Equatable {
     let statusTitles: [String]
     let actionTitles: [String]
     let showsAccessibilityAction: Bool
+    var mouseScrollReversed: Bool = false
 }
 
 @MainActor
@@ -12,30 +13,24 @@ final class MenuBarController: NSObject {
     private let onCommand: (SwitcherCommand) -> Void
     private var statusItem: NSStatusItem?
     private let readinessItem = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
-    private let accessibilityItem = NSMenuItem(title: "Accessibility: Checking…", action: nil, keyEquivalent: "")
-    private let skyLightItem = NSMenuItem(title: "SkyLight: Checking…", action: nil, keyEquivalent: "")
-    private let recheckItem = NSMenuItem(title: "Check Readiness", action: #selector(recheck), keyEquivalent: "")
     private let accessibilityActionItem = NSMenuItem(title: "Grant Accessibility Permission…", action: #selector(requestAccessibility), keyEquivalent: "")
+    private let mouseScrollItem = NSMenuItem(title: "Reverse Mouse Scrolling", action: #selector(toggleMouseScroll), keyEquivalent: "")
+    private var generalSettings = GeneralSettings.defaults
     private var menu: NSMenu?
 
     init(onCommand: @escaping (SwitcherCommand) -> Void) { self.onCommand = onCommand }
 
     func install() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(systemSymbolName: "rectangle.stack", accessibilityDescription: "Altty")
+        item.button?.image = AlttyIcon.window()
         item.button?.image?.isTemplate = true
         let menu = NSMenu()
         readinessItem.isEnabled = false
-        accessibilityItem.isEnabled = false
-        skyLightItem.isEnabled = false
         menu.addItem(readinessItem)
-        menu.addItem(accessibilityItem)
-        menu.addItem(skyLightItem)
-        menu.addItem(recheckItem)
         menu.addItem(accessibilityActionItem)
         menu.addItem(.separator())
+        menu.addItem(mouseScrollItem)
         menu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ","))
-        menu.addItem(NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Altty", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { if $0.action != nil { $0.target = self } }
@@ -47,16 +42,13 @@ final class MenuBarController: NSObject {
     var observedState: MenuBarObservedState {
         MenuBarObservedState(
             readinessTitle: readinessItem.title,
-            statusTitles: [
-                readinessItem.title,
-                accessibilityItem.title,
-                skyLightItem.title,
-            ],
+            statusTitles: [readinessItem.title],
             actionTitles: menu?.items.compactMap { item in
                 guard item.action != nil, !item.isHidden else { return nil }
                 return item.title
             } ?? [],
-            showsAccessibilityAction: !accessibilityActionItem.isHidden
+            showsAccessibilityAction: !accessibilityActionItem.isHidden,
+            mouseScrollReversed: mouseScrollItem.state == .on
         )
     }
 
@@ -67,14 +59,18 @@ final class MenuBarController: NSObject {
     }
 
     func update(state: SwitcherPresentationState) {
+        generalSettings = state.generalSettings.displayed
+        mouseScrollItem.state = generalSettings.reverseMouseWheel ? .on : .off
         readinessItem.title = state.readinessTitle
-        accessibilityItem.title = state.accessibilityStatusTitle
-        skyLightItem.title = state.skyLightStatusTitle
         accessibilityActionItem.isHidden = !state.showsAccessibilityAction
     }
-    @objc private func recheck() { onCommand(.recheckReadiness) }
+    @objc func toggleMouseScroll() {
+        onCommand(.replaceGeneralSettings(GeneralSettings(
+            launchAtLogin: generalSettings.launchAtLogin,
+            listPresentation: generalSettings.listPresentation,
+            reverseMouseWheel: !generalSettings.reverseMouseWheel)))
+    }
     @objc private func openSettings() { onCommand(.openSettings) }
     @objc private func requestAccessibility() { onCommand(.requestAccessibility) }
-    @objc private func checkForUpdates() { onCommand(.checkForUpdates) }
     @objc private func quit() { onCommand(.quit) }
 }

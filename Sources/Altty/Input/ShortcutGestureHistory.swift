@@ -11,24 +11,27 @@ final class ShortcutGestureHistory: @unchecked Sendable {
         let hold: ShortcutModifiers
         var release: UInt64?
         var claimed = false
+        var reverseSteps = 0
     }
     private let lock = NSLock()
     private var bindings: [RegisteredHotKey] = []
     private var presses: [Press] = []
     private var sequence: UInt64 = 0
+    private var previousModifiers: ShortcutModifiers = []
     private(set) var capacity = 128
 
     func configure(_ bindings: [RegisteredHotKey]) {
-        lock.withLock { self.bindings = bindings; presses.removeAll() }
+        lock.withLock { self.bindings = bindings; presses.removeAll(); previousModifiers = [] }
     }
 
-    func reset() { lock.withLock { presses.removeAll() } }
+    func reset() { lock.withLock { presses.removeAll(); previousModifiers = [] } }
 
     func keyDown(keyCode: UInt32, modifiers: ShortcutModifiers, isRepeat: Bool, at time: UInt64) {
         lock.withLock {
             guard !isRepeat, let binding = bindings.first(where: {
                 $0.keyCode == keyCode && $0.modifiers == modifiers.carbonValue
             }) else { return }
+            previousModifiers = modifiers
             sequence &+= 1
             presses.append(Press(sequence: sequence, registration: binding.id, time: time,
                                  hold: modifiers.intersection(.required)))
@@ -38,6 +41,13 @@ final class ShortcutGestureHistory: @unchecked Sendable {
 
     func flagsChanged(_ modifiers: ShortcutModifiers, at time: UInt64) {
         lock.withLock {
+            let shiftPressed = modifiers.contains(.shift) && !previousModifiers.contains(.shift)
+            previousModifiers = modifiers
+            if shiftPressed, let index = presses.indices.last,
+               presses[index].release == nil, presses[index].time <= time,
+               !modifiers.intersection(presses[index].hold).isEmpty {
+                presses[index].reverseSteps += 1
+            }
             for index in presses.indices where presses[index].release == nil && presses[index].time <= time {
                 if modifiers.intersection(presses[index].hold).isEmpty { presses[index].release = time }
             }
@@ -49,6 +59,16 @@ final class ShortcutGestureHistory: @unchecked Sendable {
             guard let index = presses.firstIndex(where: { !$0.claimed && $0.registration == registration }) else { return nil }
             presses[index].claimed = true
             return presses[index].sequence
+        }
+    }
+
+    /// Consume modifier-only navigation once, before confirming its gesture.
+    func takeReverseSteps(after sequence: UInt64) -> Int {
+        lock.withLock {
+            guard let index = presses.firstIndex(where: { $0.sequence == sequence }) else { return 0 }
+            let count = presses[index].reverseSteps
+            presses[index].reverseSteps = 0
+            return count
         }
     }
 

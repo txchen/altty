@@ -133,7 +133,6 @@ private final class FocusSmokePresentationAdapter: PresentationAdapter {
     func updateSwitcherPanel(state _: SwitcherPanelState) {}
     func dismissSwitcherPanel() {}
     func presentSwitchingError(_: SwitchingError) {}
-    func checkForUpdates() {}
     func openExternalPage(_: ExternalPage) {}
 }
 

@@ -105,6 +105,7 @@ final class SystemMouseScrollAdapter: MouseScrollAdapter {
     }
 
     func requestInputMonitoringPermission() {
+        guard !canListen() else { return }
         _ = CGRequestListenEventAccess()
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {
             NSWorkspace.shared.open(url)

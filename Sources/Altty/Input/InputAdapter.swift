@@ -65,6 +65,7 @@ private let alttyCarbonHotKeyHandler: EventHandlerUPP = { _, event, userData in
 
 enum ShortcutEvent: Equatable, Sendable {
     case switcherPressed(SwitcherMode, SwitchDirection)
+    case navigate(SwitchDirection)
     case monitoringFailed
     case holdModifiersReleased
     case cancel(SwitcherCancellationReason)
@@ -110,6 +111,7 @@ final class SystemInputAdapter: InputAdapter {
     private var physicalMonitorGeneration = UUID()
     private var activePhysicalPress: UInt64?
     private var shortcutIsActive = false
+    private var previousModifiers: NSEvent.ModifierFlags = []
     private var activeHoldModifiers: ShortcutModifiers = []
     private(set) var configuredShortcuts: ShortcutPair
     private(set) var shortcutsEnabled = false
@@ -366,11 +368,15 @@ final class SystemInputAdapter: InputAdapter {
               let registration = activeRegistrations.first(where: {
                   $0.hotKey.id == id
               }) else { return false }
+        // Drain the previous press before replacing its identity. A Carbon callback
+        // can overtake the main-thread delivery of physical Shift changes.
+        confirmPhysicalRelease()
         if let gestureHistory {
             guard let sequence = gestureHistory.claim(registration: id) else { return false }
             activePhysicalPress = sequence
         }
         shortcutIsActive = true
+        previousModifiers = registration.binding.modifiers.eventFlags
         activeHoldModifiers = registration.binding.modifiers.intersection(.required)
         onEvent?(.switcherPressed(registration.mode, registration.direction))
         confirmPhysicalRelease()
@@ -379,6 +385,12 @@ final class SystemInputAdapter: InputAdapter {
 
     func modifiersChanged(_ flags: NSEvent.ModifierFlags) {
         if gestureHistory != nil { confirmPhysicalRelease(); return }
+        let shiftPressed = flags.contains(.shift) && !previousModifiers.contains(.shift)
+        previousModifiers = flags
+        if shortcutIsActive, shiftPressed,
+           !flags.intersection(activeHoldModifiers.eventFlags).isEmpty {
+            onEvent?(.navigate(.backward))
+        }
         guard shortcutIsActive,
               flags.intersection(.deviceIndependentFlagsMask)
                 .intersection(activeHoldModifiers.eventFlags).isEmpty else { return }
@@ -388,8 +400,11 @@ final class SystemInputAdapter: InputAdapter {
     }
 
     private func confirmPhysicalRelease() {
-        guard shortcutIsActive, let activePhysicalPress,
-              gestureHistory?.canConfirm(activePhysicalPress) == true else { return }
+        guard shortcutIsActive, let activePhysicalPress, let gestureHistory else { return }
+        for _ in 0..<gestureHistory.takeReverseSteps(after: activePhysicalPress) {
+            onEvent?(.navigate(.backward))
+        }
+        guard gestureHistory.canConfirm(activePhysicalPress) else { return }
         shortcutIsActive = false
         self.activePhysicalPress = nil
         activeHoldModifiers = []

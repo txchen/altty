@@ -128,7 +128,7 @@ struct MouseScrollTests {
         let settings = GeneralSettings(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true)
         let snapshot = SettingsSnapshot(shortcuts: .defaults, general: settings)
         #expect(engine.send(.replaceGeneralSettings(settings)) == [.persistSettings(snapshot)])
-        #expect(engine.receiveSettingsPersistence(.saved(snapshot)) == [.setMouseScrollReversalEnabled(true)])
+        #expect(engine.receiveSettingsPersistence(.saved(snapshot)) == [.setMouseScrollReversalEnabled(true), .requestMouseScrollPermission])
         engine.receiveMouseScrollStatus(.active)
         #expect(engine.presentationState.generalSettings.current.reverseMouseWheel)
         #expect(engine.presentationState.generalSettings.mouseScrollStatus == .active)

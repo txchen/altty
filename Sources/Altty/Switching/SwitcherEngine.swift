@@ -99,7 +99,6 @@ enum SwitcherCommand: Equatable, Sendable {
     case openSettings
     case requestAccessibility
     case requestMouseScrollPermission
-    case checkForUpdates
     case openExternalPage(ExternalPage)
     case openLoginItemsSettings
     case quit
@@ -129,7 +128,6 @@ enum SwitcherEffect: Equatable, Sendable {
     case presentSettings
     case requestAccessibility
     case requestMouseScrollPermission
-    case checkForUpdates
     case openExternalPage(ExternalPage)
     case openLoginItemsSettings
     case terminate
@@ -509,13 +507,13 @@ final class SwitcherEngine {
             origin: origin,
             selectedIndex: selectedIndex,
             phase: .waitingForModifierRelease,
-            panelPresentationDeadlineMilliseconds: clock.nowMilliseconds + 125,
+            panelPresentationDeadlineMilliseconds: clock.nowMilliseconds + 100,
             listPresentation: presentationState.generalSettings.current.listPresentation
         )
         nextFocusTransactionID &+= 1
 
         if candidates.count == 1 { return confirmSwitch() }
-        return [.scheduleSwitcherPanel(delayMilliseconds: 125)]
+        return [.scheduleSwitcherPanel(delayMilliseconds: 100)]
     }
 
     func invokeAllWindowsSwitch(direction: SwitchDirection) async -> [SwitcherEffect] {
@@ -688,8 +686,6 @@ final class SwitcherEngine {
             return [.requestAccessibility, .checkAccessibility]
         case .requestMouseScrollPermission:
             return [.requestMouseScrollPermission]
-        case .checkForUpdates:
-            return [.checkForUpdates]
         case let .openExternalPage(page):
             return [.openExternalPage(page)]
         case .openLoginItemsSettings:
@@ -811,6 +807,9 @@ final class SwitcherEngine {
                     effects.append(.setMouseScrollReversalEnabled(
                         snapshot.general.reverseMouseWheel && presentationState.accessibility == .available
                     ))
+                    if snapshot.general.reverseMouseWheel {
+                        effects.append(.requestMouseScrollPermission)
+                    }
                 }
             }
             return effects

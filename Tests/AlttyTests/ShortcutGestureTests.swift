@@ -9,6 +9,69 @@ import Testing
 }
 
 @MainActor struct ShortcutGestureTests {
+    @Test func shiftAloneNavigatesBackOncePerPressBeforeRelease() {
+        let history = ShortcutGestureHistory()
+        let registrar = GestureRegistrar()
+        let input = SystemInputAdapter(registrar: registrar, usesSystemMonitors: false, gestureHistory: history)
+        var events: [ShortcutEvent] = []
+        input.install { events.append($0) }
+        _ = input.setShortcutsEnabled(true)
+        let key = registrar.bindings[0]
+        history.keyDown(keyCode: key.keyCode, modifiers: [.option], isRepeat: false, at: 10)
+        _ = input.hotKeyPressed(id: key.id)
+        history.flagsChanged([.option, .shift], at: 20)
+        input.modifiersChanged([.option, .shift])
+        input.modifiersChanged([.option, .shift])
+        history.flagsChanged([.option], at: 30)
+        input.modifiersChanged([.option])
+        history.flagsChanged([.option, .shift], at: 40)
+        history.flagsChanged([], at: 50)
+        input.modifiersChanged([])
+        #expect(events == [.switcherPressed(.allWindows, .forward), .navigate(.backward),
+                           .navigate(.backward), .holdModifiersReleased])
+        #expect(events.last == .holdModifiersReleased)
+    }
+
+    @Test func delayedCarbonCallbacksPreserveShiftStepsBetweenTabPresses() {
+        let history = ShortcutGestureHistory()
+        let registrar = GestureRegistrar()
+        let input = SystemInputAdapter(registrar: registrar, usesSystemMonitors: false, gestureHistory: history)
+        var events: [ShortcutEvent] = []
+        input.install { events.append($0) }
+        _ = input.setShortcutsEnabled(true)
+        let key = registrar.bindings[0]
+        history.keyDown(keyCode: key.keyCode, modifiers: [.option], isRepeat: false, at: 10)
+        _ = input.hotKeyPressed(id: key.id)
+        history.flagsChanged([.option, .shift], at: 20)
+        history.flagsChanged([.option], at: 25)
+        history.keyDown(keyCode: key.keyCode, modifiers: [.option], isRepeat: false, at: 30)
+        history.flagsChanged([.option, .shift], at: 40)
+        history.flagsChanged([], at: 50)
+        _ = input.hotKeyPressed(id: key.id) // Carbon arrives before flagsChanged delivery
+        input.modifiersChanged([])
+        #expect(events == [.switcherPressed(.allWindows, .forward), .navigate(.backward),
+                           .switcherPressed(.allWindows, .forward), .navigate(.backward), .holdModifiersReleased])
+    }
+
+    @Test func shiftOutsideAHeldGestureDoesNotNavigateOrOpenASession() {
+        let history = ShortcutGestureHistory()
+        let registrar = GestureRegistrar()
+        let input = SystemInputAdapter(registrar: registrar, usesSystemMonitors: false, gestureHistory: history)
+        var events: [ShortcutEvent] = []
+        input.install { events.append($0) }
+        _ = input.setShortcutsEnabled(true)
+        history.flagsChanged([.shift], at: 1)
+        input.modifiersChanged([.shift])
+        #expect(events.isEmpty)
+        let key = registrar.bindings[0]
+        history.keyDown(keyCode: key.keyCode, modifiers: [.option], isRepeat: false, at: 10)
+        history.flagsChanged([], at: 20)
+        history.flagsChanged([.shift], at: 30)
+        _ = input.hotKeyPressed(id: key.id)
+        input.modifiersChanged([.shift])
+        #expect(events == [.switcherPressed(.allWindows, .forward), .holdModifiersReleased])
+    }
+
     @Test func twoPhysicalTapsKeepTheirOwnReleasesWhenMainCallbacksAreDelayed() {
         let history = ShortcutGestureHistory()
         let registrar = GestureRegistrar()

@@ -55,3 +55,26 @@ representative apps (dialogs, floating palettes, slide shows). The gesture obser
 is read-only and retains only a bounded history of registered chords; if the system
 cannot install it, shortcuts report Input Monitoring unavailable. No typed text is
 recorded. Resource and long-running acceptance remains in [performance.md](performance.md).
+
+## Exact-window focus regression
+
+Run `ALTTY_SWIFT_BUILD_SYSTEM=native scripts/check-window-focus.sh` before delivering
+changes to switching. This starts two disposable AppKit apps with three windows
+each, uses the production WindowFocusExecutor, checks exact PID/WID for 24 forward/
+reverse transitions, and minimizes/restores one window in each app. It restores the
+previous foreground window afterward and terminates its own fixtures. It changes
+focus during the run, logs only fixture identities/timings, and never synthesizes
+shortcut key presses. Exit 77 means the client lacks Accessibility permission.
+
+On 2026-09-23 this caught the original missing-AXRaise bug: SkyLight returned success
+but the second window never became focused. The corrected mandatory-SkyLight then
+AX-ordering sequence passed all 24 transitions and both restorations on this host.
+Physical hotkey delivery and third-party app compatibility remain separate checks.
+
+Update 2026-09-23: the unmodified hostile AX recovery check now passes on this same
+host, along with 22 creates/closes. The earlier malformed-reference observation is
+historical, not an ongoing failing gate; its environmental cause was not established.
+
+Settings visual coverage also includes Shortcuts, About and the mouse Input
+Monitoring recovery state, bringing the fixture total to 36 PNGs. Permission dialogs
+remain a user-driven QA gate; the visual fixture does not grant or request access.

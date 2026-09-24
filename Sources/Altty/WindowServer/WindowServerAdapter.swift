@@ -444,7 +444,6 @@ private struct SkyLightFocus: Sendable {
         private static let recordLength: UInt8 = 0xf8
         private static let eventTypeOffset = 0x08
         private static let leftMouseDown: UInt8 = 0x01
-        private static let leftMouseUp: UInt8 = 0x02
         private static let windowLocationOffset = 0x20
         private static let windowIDOffset = 0x3c
         private static let compatibilityFlagOffset = 0x3a
@@ -454,7 +453,8 @@ private struct SkyLightFocus: Sendable {
 
         init(wid: WindowID) {
             var wid = wid
-            var offContentPoint = CGPoint(x: -1, y: -1)
+            // Keep the focus event far outside resize handles and window content.
+            var offContentPoint = CGPoint(x: 300_000, y: 300_000)
             bytes[Self.recordLengthOffset] = Self.recordLength
             bytes[Self.compatibilityFlagOffset] = Self.compatibilityFlag
             bytes.withUnsafeMutableBytes { destination in
@@ -474,10 +474,8 @@ private struct SkyLightFocus: Sendable {
             using postEvent: PostEventRecord
         ) -> Bool {
             bytes[Self.eventTypeOffset] = Self.leftMouseDown
-            let down = postEvent(&psn, &bytes)
-            bytes[Self.eventTypeOffset] = Self.leftMouseUp
-            let up = postEvent(&psn, &bytes)
-            return down == .success && up == .success
+            // Do not complete a click on a control if an application clamps the point.
+            return postEvent(&psn, &bytes) == .success
         }
     }
 

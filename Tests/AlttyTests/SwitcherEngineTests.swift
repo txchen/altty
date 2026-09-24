@@ -58,7 +58,6 @@ struct SwitcherEngineTests {
 
         #expect(engine.send(.openSettings) == [.presentSettings])
         #expect(engine.send(.requestAccessibility) == [.requestAccessibility, .checkAccessibility])
-        #expect(engine.send(.checkForUpdates) == [.checkForUpdates])
         #expect(engine.send(.quit) == [.terminate])
         #expect(engine.send(.recheckReadiness) == [
             .setShortcutsEnabled(false),
@@ -679,31 +678,35 @@ struct AllWindowsSwitcherSessionTests {
         return (engine, identities)
     }
 
-    @Test func heldSessionSchedulesA125MillisecondPanelWithoutFlashingForQuickTaps() async {
+    @Test func heldSessionSchedulesA100MillisecondPanelWithoutFlashingForQuickTaps() async {
         let clock = ManualSwitcherClock()
         let (heldEngine, identities) = await makeInteractiveEngine(clock: clock)
 
         #expect(await heldEngine.beginAllWindowsSwitch() == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(heldEngine.activeSwitchSession?.mode == .allWindows)
         #expect(heldEngine.activeSwitchSession?.invocationPID == 100)
         #expect(heldEngine.activeSwitchSession?.candidates.map(\.identity) == identities)
         #expect(heldEngine.activeSwitchSession?.panelState.rows[0].applicationName == "First App")
         #expect(heldEngine.activeSwitchSession?.panelState.rows[0].applicationBundlePath == "/Applications/First.app")
-        clock.nowMilliseconds += 124
+        clock.nowMilliseconds += 99
         #expect(heldEngine.receiveSession(.panelDelayElapsed) == [])
         clock.nowMilliseconds += 1
         #expect(heldEngine.receiveSession(.panelDelayElapsed) == [
             .showSwitcherPanel(heldEngine.activeSwitchSession!.panelState),
         ])
 
-        let (quickEngine, _) = await makeInteractiveEngine()
+        let quickClock = ManualSwitcherClock()
+        let (quickEngine, _) = await makeInteractiveEngine(clock: quickClock)
         _ = await quickEngine.beginAllWindowsSwitch()
+        quickClock.nowMilliseconds += 80
+        #expect(quickEngine.receiveSession(.panelDelayElapsed).isEmpty)
         #expect(quickEngine.confirmSwitch() == [
             .focusWindow(WindowIdentity(wid: 20, pid: 200, generation: 1)),
         ])
         #expect(quickEngine.confirmSwitch() == [])
+        quickClock.nowMilliseconds += 100
         #expect(quickEngine.receiveSession(.panelDelayElapsed) == [])
     }
 
@@ -711,7 +714,7 @@ struct AllWindowsSwitcherSessionTests {
         let (engine, identities) = await makeInteractiveEngine()
 
         #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(engine.activeSwitchSession?.target.identity == identities[1])
         #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [])
@@ -732,7 +735,7 @@ struct AllWindowsSwitcherSessionTests {
         let clock = ManualSwitcherClock()
         let (engine, identities) = await makeInteractiveEngine(clock: clock)
         _ = await engine.beginAllWindowsSwitch()
-        clock.nowMilliseconds += 125
+        clock.nowMilliseconds += 100
         _ = engine.receiveSession(.panelDelayElapsed)
 
         #expect(engine.activeSwitchSession?.target.identity == identities[1])
@@ -751,7 +754,7 @@ struct AllWindowsSwitcherSessionTests {
         let clickClock = ManualSwitcherClock()
         let (clickEngine, identities) = await makeInteractiveEngine(clock: clickClock)
         _ = await clickEngine.beginAllWindowsSwitch()
-        clickClock.nowMilliseconds += 125
+        clickClock.nowMilliseconds += 100
         _ = clickEngine.receiveSession(.panelDelayElapsed)
 
         #expect(clickEngine.receiveSession(.select(identities[2])) == [
@@ -775,7 +778,7 @@ struct AllWindowsSwitcherSessionTests {
         let clock = ManualSwitcherClock()
         let (engine, identities) = await makeInteractiveEngine(clock: clock)
         _ = await engine.beginAllWindowsSwitch()
-        clock.nowMilliseconds += 125
+        clock.nowMilliseconds += 100
         _ = engine.receiveSession(.panelDelayElapsed)
         let capturedRows = engine.activeSwitchSession?.candidates
 
@@ -842,7 +845,7 @@ struct AllWindowsSwitcherSessionTests {
         _ = await engine.receiveInventory(.focused(current))
 
         #expect(await engine.beginAllWindowsSwitch() == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(engine.activeSwitchSession?.target.identity.wid == 10)
         #expect(engine.confirmSwitch() == [
@@ -870,7 +873,7 @@ struct AllWindowsSwitcherSessionTests {
         _ = await engine.receiveInventory(.focused(origin))
 
         #expect(await engine.beginAllWindowsSwitch() == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(engine.confirmSwitch() == [.deminimizeWindow(target)])
         #expect(await engine.receiveCurrentSwitching(.deminimizeCompleted(target, succeeded: true)) == [
@@ -1295,7 +1298,7 @@ struct CurrentAppSwitcherSessionTests {
         )
 
         #expect(await engine.beginSwitch(mode: .currentApp, direction: .forward) == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(engine.activeSwitchSession?.mode == .currentApp)
         #expect(engine.activeSwitchSession?.invocationPID == 100)
@@ -1324,7 +1327,7 @@ struct CurrentAppSwitcherSessionTests {
         )
 
         #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(await engine.invokeSwitch(mode: .currentApp, direction: .forward) == [
             .endActiveSession,
@@ -1332,7 +1335,7 @@ struct CurrentAppSwitcherSessionTests {
         #expect(engine.activeSwitchSession == nil)
 
         #expect(await engine.invokeSwitch(mode: .currentApp, direction: .backward) == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(engine.activeSwitchSession?.mode == .currentApp)
         #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [
@@ -1345,7 +1348,7 @@ struct CurrentAppSwitcherSessionTests {
         ])
         #expect(engine.activeSwitchSession == nil)
         #expect(await engine.invokeAllWindowsSwitch(direction: .forward) == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(engine.activeSwitchSession?.mode == .allWindows)
         #expect(engine.activeSwitchSession?.candidates.map(\.identity) == identities)
@@ -1449,7 +1452,7 @@ struct CurrentAppSwitcherSessionTests {
         #expect(await engine.inventorySnapshot().frontmostApplicationPID == 200)
 
         #expect(await engine.invokeSwitch(mode: .currentApp, direction: .forward) == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(engine.activeSwitchSession?.mode == .currentApp)
         #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [
@@ -1491,9 +1494,9 @@ struct CurrentAppSwitcherSessionTests {
         )
 
         #expect(await engine.beginSwitch(mode: .currentApp, direction: .forward) == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
-        clock.nowMilliseconds += 125
+        clock.nowMilliseconds += 100
         #expect(engine.receiveSession(.panelDelayElapsed) == [
             .showSwitcherPanel(engine.activeSwitchSession!.panelState),
         ])
@@ -1534,6 +1537,64 @@ struct SwitcherPanelTests {
             applicationIsHidden: hidden,
             isFullscreen: fullscreen
         )
+    }
+
+    @Test func visibleRowsAreLaidOutBeforeThePanelIsOrderedOnScreen() async {
+        _ = NSApplication.shared
+        let window = FirstFrameInspectionPanel(contentRect: .init(x: 0, y: 0, width: 520, height: 120),
+                                               styleMask: [.nonactivatingPanel], backing: .buffered, defer: false)
+        let panel = SwitcherPanelController(panel: window)
+        let rows = (1...24).map { self.window(wid: UInt32($0), title: "Document \($0)") }
+        window.inspectBeforeOrder = {
+            let table = panel.tableView
+            let visible = table.rows(in: table.visibleRect)
+            #expect(visible.length > 0)
+            #expect(table.visibleRect.height > 0)
+            for row in visible.location..<(visible.location + visible.length) {
+                let view = table.view(atColumn: 0, row: row, makeIfNecessary: false)
+                #expect(view != nil, "First visible frame is missing row \(row)")
+                #expect((view?.frame.height ?? 0) > 0)
+                #expect((view?.subviews.first?.frame.width ?? 0) > 0)
+            }
+        }
+        for iteration in 0..<100 {
+            let count = [3, 24, 1, 7][iteration % 4]
+            let currentRows = Array(rows.prefix(count))
+            let selected = iteration.isMultiple(of: 2) ? 0 : count - 1
+            let mode: SwitcherMode = iteration.isMultiple(of: 3) ? .currentApp : .allWindows
+            panel.show(state: .init(mode: mode, shortcutDescription: "⌥Tab", rows: currentRows,
+                                   selectedIdentity: currentRows[selected].identity,
+                                   listPresentation: .init(visibleRowCount: 7,
+                                       density: iteration.isMultiple(of: 2) ? .compact : .comfortable)))
+            #expect(panel.observedState.selectedRowIsVisible)
+            panel.dismiss()
+            await Task.yield()
+        }
+        window.inspectBeforeOrder = nil
+    }
+
+    @Test func selectingLastVisibleRowDoesNotMoveTheList() {
+        _ = NSApplication.shared
+        let rows = (1...7).map { window(wid: UInt32($0), title: "Window \($0)") }
+        let panel = SwitcherPanelController()
+        func state(_ index: Int) -> SwitcherPanelState {
+            .init(mode: .allWindows, shortcutDescription: "⌥Tab", rows: rows,
+                  selectedIdentity: rows[index].identity)
+        }
+        panel.show(state: state(0))
+        defer { panel.dismiss() }
+        panel.tableView.window?.contentView?.layoutSubtreeIfNeeded()
+        let originalFrame = panel.tableView.window!.frame
+        let originalRect = panel.tableView.visibleRect
+        let frames = rows.indices.map { panel.tableView.convert(panel.tableView.rect(ofRow: $0), to: nil) }
+        for index in Array(rows.indices) + Array(rows.indices.reversed()) {
+            panel.update(state: state(index))
+            panel.tableView.window?.contentView?.layoutSubtreeIfNeeded()
+            #expect(panel.tableView.window!.frame == originalFrame)
+            #expect(panel.tableView.visibleRect == originalRect)
+            #expect(panel.tableView.visibleRect.contains(panel.tableView.rect(ofRow: index)))
+            #expect(rows.indices.map { panel.tableView.convert(panel.tableView.rect(ofRow: $0), to: nil) } == frames)
+        }
     }
 
     @Test func appKitPanelExposesVisibleContentSelectionAndMouseActions() {
@@ -1669,10 +1730,10 @@ struct SwitcherPanelTests {
         let panel = SwitcherPanelController()
 
         #expect(await engine.beginAllWindowsSwitch() == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(!panel.observedState.isVisible)
-        clock.nowMilliseconds += 124
+        clock.nowMilliseconds += 99
         applyPanelEffects(engine.receiveSession(.panelDelayElapsed), to: panel)
         #expect(!panel.observedState.isVisible)
         clock.nowMilliseconds += 1
@@ -1683,7 +1744,7 @@ struct SwitcherPanelTests {
         #expect(!panel.observedState.isVisible)
         _ = await engine.beginAllWindowsSwitch()
         applyPanelEffects(engine.receiveSession(.cancel(.outsideClick)), to: panel)
-        clock.nowMilliseconds += 125
+        clock.nowMilliseconds += 100
         applyPanelEffects(engine.receiveSession(.panelDelayElapsed), to: panel)
         #expect(!panel.observedState.isVisible)
     }
@@ -1704,5 +1765,13 @@ struct SwitcherPanelTests {
                 break
             }
         }
+    }
+}
+
+@MainActor private final class FirstFrameInspectionPanel: NSPanel {
+    var inspectBeforeOrder: (() -> Void)?
+    override func orderFrontRegardless() {
+        inspectBeforeOrder?()
+        super.orderFrontRegardless()
     }
 }

@@ -127,7 +127,7 @@ struct ExceptionRulesTests {
         )
 
         #expect(await engine.beginSwitch(mode: .allWindows, direction: .forward) == [
-            .scheduleSwitcherPanel(delayMilliseconds: 125),
+            .scheduleSwitcherPanel(delayMilliseconds: 100),
         ])
         #expect(engine.activeSwitchSession?.candidates.map(\.identity) == [
             identities[2], identities[3],

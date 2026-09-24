@@ -69,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         run(environment.engine.receiveLaunchAtLoginStatus(
             environment.launchAtLogin.status
         ))
+        if environment.engine.presentationState.generalSettings.current.reverseMouseWheel {
+            run(environment.engine.send(.recheckReadiness))
+        }
         refreshPresentation()
     }
 
@@ -99,6 +102,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let effects = await self.environment.engine.invokeSwitch(mode: mode, direction: direction)
                 guard self.inventoryRefresh.isCurrent(revision) else { return }
                 self.run(effects)
+            case let .navigate(direction):
+                self.run(self.environment.engine.receiveSession(.navigate(direction)))
             case .holdModifiersReleased:
                 self.run(self.environment.engine.confirmSwitch())
             case let .cancel(reason):
@@ -154,8 +159,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .requestMouseScrollPermission:
                 environment.mouseScroll.requestInputMonitoringPermission()
                 handle(.recheckReadiness)
-            case .checkForUpdates:
-                environment.presentation.checkForUpdates()
             case let .openExternalPage(page):
                 environment.presentation.openExternalPage(page)
             case .openLoginItemsSettings:
@@ -209,8 +212,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case let .scheduleSwitcherPanel(delayMilliseconds):
                 scheduleSwitcherPanel(delayMilliseconds: delayMilliseconds)
             case let .showSwitcherPanel(state):
-                recordShortcutLatency(.shortcutToPanelPresentation, clearStart: false)
+                let preparationStarted = DispatchTime.now().uptimeNanoseconds
                 environment.presentation.showSwitcherPanel(state: state)
+                environment.diagnostics.recordPerformance(.latency(.panelPreparation,
+                    nanoseconds: DispatchTime.now().uptimeNanoseconds - preparationStarted))
+                recordShortcutLatency(.shortcutToPanelPresentation, clearStart: false)
             case let .updateSwitcherPanel(state):
                 environment.presentation.updateSwitcherPanel(state: state)
             case let .replaceShortcuts(pair):
@@ -366,7 +372,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self,
                   self.environment.engine.isCurrentFocusTransaction(transactionID) else { return }
             self.recordAdapterCall(.skyLight)
-            let succeeded = await self.environment.windowServer.focus(identity)
+            let executor = WindowFocusExecutor(windowServer: self.environment.windowServer,
+                                               accessibility: self.environment.accessibility)
+            let succeeded = await executor.focus(identity) {
+                self.environment.engine.isCurrentFocusTransaction(transactionID)
+            }
             self.receive(
                 .focusCompleted(identity, succeeded: succeeded),
                 transactionID: transactionID
@@ -381,7 +391,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let origin, self.inventoryRefresh.isCurrent(revision), self.isMonitoringInventory,
                self.environment.engine.activeSwitchSession == nil {
                 self.recordAdapterCall(.skyLight)
-                _ = await self.environment.windowServer.focus(origin)
+                let executor = WindowFocusExecutor(windowServer: self.environment.windowServer,
+                                                   accessibility: self.environment.accessibility)
+                _ = await executor.focus(origin) {
+                    self.inventoryRefresh.isCurrent(revision)
+                        && self.environment.engine.activeSwitchSession == nil
+                }
             }
             try? await Task.sleep(for: .milliseconds(100))
             self.environment.engine.completeFailedFocusRecovery(target)

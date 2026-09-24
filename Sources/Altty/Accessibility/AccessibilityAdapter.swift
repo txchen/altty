@@ -22,6 +22,7 @@ protocol AccessibilityAdapter: AnyObject {
     func cancelPendingEnrichment()
     func enrichment(for identity: WindowIdentity) async -> WindowSemanticPatch
     func deminimize(_ identity: WindowIdentity) async -> Bool
+    func raiseWindow(_ identity: WindowIdentity) async
     func focusedWindow() async -> FocusedWindow?
     func startMonitoringInventory(_ onEvent: @escaping @MainActor (AccessibilityInventoryEvent) -> Void)
     func observeApplication(pid: ProcessID)
@@ -39,6 +40,7 @@ extension AccessibilityAdapter {
         for (identity, patch) in await enrichments(for: identities) { await onPatch(identity, patch) }
     }
     func cancelPendingEnrichment() {}
+    func raiseWindow(_ identity: WindowIdentity) async {}
 }
 
 @MainActor
@@ -197,6 +199,13 @@ final class SystemAccessibilityAdapter: AccessibilityAdapter {
         retryWaits[id] = (pid, wait)
         defer { retryWaits[id] = nil }
         do { try await wait.value; return true } catch { return false }
+    }
+
+    func raiseWindow(_ identity: WindowIdentity) async {
+        _ = await queryScheduler.run(pid: identity.pid, priority: .interactive) { [isProcessRunning] in
+            guard isProcessRunning(identity.pid) else { return false }
+            return AXWindowReader.raiseWindow(identity)
+        }
     }
 
     func deminimize(_ identity: WindowIdentity) async -> Bool {
@@ -432,6 +441,15 @@ private enum AXWindowReader {
         ) == .success else { return false }
         let updated: Bool? = attribute(window, kAXMinimizedAttribute as CFString, budget: budget)
         return updated == false
+    }
+
+    static func raiseWindow(_ identity: WindowIdentity) -> Bool {
+        let budget = AXReadBudget()
+        guard let window = windowElement(for: identity, budget: budget),
+              budget.prepare(window) else { return false }
+        // A best-effort ordering step. Exact focus is still checked separately;
+        // unsupported AXRaise alone must not turn a successful focus into an error.
+        return AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success
     }
 
     static func focusedWindow(pid: ProcessID) -> FocusedWindow? {

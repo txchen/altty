@@ -52,13 +52,27 @@ import AppKit
                 settings.tableViewSelectionDidChange(Notification(name: NSTableView.selectionDidChangeNotification, object: sidebar))
             }
             try await capture(view, appearance: appearance, name: "exceptions-\(theme)", output: output)
+            if let sidebar = descendants(view).compactMap({ $0 as? NSTableView }).first {
+                for (index, name) in [(1, "shortcuts"), (3, "about")] {
+                    sidebar.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+                    settings.tableViewSelectionDidChange(Notification(name: NSTableView.selectionDidChangeNotification, object: sidebar))
+                    try await capture(view, appearance: appearance, name: "\(name)-\(theme)", output: output)
+                }
+                var permissionState = state
+                permissionState.generalSettings.current = .init(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true)
+                permissionState.generalSettings.mouseScrollStatus = .inputMonitoringRequired
+                settings.update(state: permissionState)
+                sidebar.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+                settings.tableViewSelectionDidChange(Notification(name: NSTableView.selectionDidChangeNotification, object: sidebar))
+                try await capture(view, appearance: appearance, name: "permissions-\(theme)", output: output)
+            }
             settings.close()
         }
         let manifest: [String: String] = ["os": ProcessInfo.processInfo.operatingSystemVersionString,
             "renderer": "AppKit cacheDisplay; synthetic content; inactive within-window material", "scales": "1,2"]
         try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("environment.json"))
-        print("Rendered 24 synthetic UI snapshots to \(output.path)")
+        print("Rendered 36 synthetic UI snapshots to \(output.path)")
     }
 
     @MainActor private static func descendants(_ view: NSView) -> [NSView] {
@@ -78,7 +92,8 @@ import AppKit
             if let table = child as? NSTableView, table.style == .sourceList {
                 table.selectionHighlightStyle = .none
             }
-            if let image = child as? NSImageView {
+            if let image = child as? NSImageView,
+               !["settings", "exceptions", "shortcuts", "about", "permissions"].contains(where: { name.hasPrefix($0) }) {
                 image.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "Fixture")
             }
         }

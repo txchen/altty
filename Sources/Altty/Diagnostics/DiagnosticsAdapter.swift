@@ -16,6 +16,7 @@ enum PerformanceAdapter: String, Equatable, Sendable {
 enum PerformanceMetric: String, Equatable, Sendable {
     case shortcutToFocusStart = "shortcut_to_focus_start"
     case shortcutToPanelPresentation = "shortcut_to_panel_presentation"
+    case panelPreparation = "panel_preparation"
 }
 
 enum PerformanceEvent: Equatable, Sendable {

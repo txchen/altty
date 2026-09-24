@@ -21,6 +21,12 @@ The specification must settle user behavior, window discovery and focus semantic
 
 ## Decisions so far
 
+- [40 — settings and menu polish](issues/40-polish-settings-and-menu.md): one shared mouse reversal preference in menu and Settings; Homebrew-managed updates; card layouts and native permission requests with exact-bundle Finder recovery.
+
+- [39 — first-frame readiness](issues/39-prepare-switcher-content-before-ordering.md): prepare and draw the final viewport before ordering the panel; log preparation duration. Missing pre-order cells reproduced; original intermittent compositor symptom still requires field observation.
+
+- [38 — stable panel and keyboard behavior](issues/38-stable-panel-and-alttab-keyboard-behavior.md): explicit plain table geometry prevents last-row jumps; 100 ms display grace suppresses quick-tap panels; Shift alone navigates backward within a held session.
+
 <!-- Closed-ticket pointers are appended here. -->
 
 - [Harden lifecycle, failures and event races](issues/19-harden-lifecycle-failures-and-event-races.md) — Correlate asynchronous focus work with monotonic transaction identities, reference-count failed-target suppression, fail readiness closed on Active Space query failure and bound AX window messaging; the deterministic suite covers the hostile lifecycle matrix.

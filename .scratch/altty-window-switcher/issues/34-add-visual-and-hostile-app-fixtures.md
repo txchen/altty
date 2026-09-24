@@ -1,6 +1,6 @@
 # 34 — add visual and hostile app fixtures
 
-Status: claimed
+Status: resolved
 
 ## Scope
 
@@ -21,3 +21,9 @@ stall/churn fixture. Pixel checks and 22-window lifecycle passed. AX integration
 remains failing on this macOS 27 host: returned window elements have AXApplication
 role even in an independent minimal Objective-C repro. Do not close the real AX
 acceptance gate from mocked test results. See [QA details](../../../Docs/qa-fixtures.md).
+
+## 2026-09-23 verification
+
+The unchanged `scripts/check-hostile-fixture.sh` now returns AX_PASSED and
+LIFECYCLE_PASSED on the host. The earlier AX integration blocker is no longer
+reproducing. Exact-window focus has a separate real regression gate under issue 37.

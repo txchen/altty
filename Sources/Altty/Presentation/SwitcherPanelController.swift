@@ -109,9 +109,12 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         )
     }
 
-    init(displayProvider: any SwitcherDisplayProviding = SystemSwitcherDisplayProvider()) {
+    init(
+        displayProvider: any SwitcherDisplayProviding = SystemSwitcherDisplayProvider(),
+        panel: NSPanel? = nil
+    ) {
         self.displayProvider = displayProvider
-        panel = NSPanel(
+        self.panel = panel ?? NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 120),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
@@ -124,11 +127,15 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
     func show(state: SwitcherPanelState) {
         update(state: state)
         placePanel(state: state)
-        panel.orderFrontRegardless()
+        // Resolve the final viewport while still off-screen. Ordering the panel
+        // first can expose its material before NSTableView creates any rows.
         panel.contentView?.layoutSubtreeIfNeeded()
         if tableView.selectedRow >= 0 {
             tableView.scrollRowToVisible(tableView.selectedRow)
         }
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.display()
+        panel.orderFrontRegardless()
     }
 
     func update(state: SwitcherPanelState) {
@@ -208,6 +215,10 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SwitcherWindow"))
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
+        // Own the geometry: AppKit's automatic/inset style adds implicit vertical
+        // padding, making the last row scroll even when every row should fit.
+        tableView.style = .plain
+        tableView.usesAutomaticRowHeights = false
         tableView.headerView = nil
         tableView.rowHeight = 54
         tableView.intercellSpacing = NSSize(width: 0, height: 2)
@@ -222,7 +233,7 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
 
         scrollView.documentView = tableView
         scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
+        scrollView.hasVerticalScroller = false
         scrollView.autohidesScrollers = true
 
         let content = NSStackView(views: [header, scrollView])
@@ -334,8 +345,8 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
 
     private var selectedRowIsVisible: Bool {
         guard tableView.selectedRow >= 0 else { return false }
-        return tableView.rect(ofRow: tableView.selectedRow).intersects(
-            scrollView.documentVisibleRect
+        return scrollView.documentVisibleRect.contains(
+            tableView.rect(ofRow: tableView.selectedRow)
         )
     }
 

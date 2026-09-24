@@ -15,7 +15,7 @@ struct GeneralSettingsState: Equatable, Sendable {
             return "Mouse wheel reversal needs Accessibility permission."
         }
         if mouseScrollStatus == .inputMonitoringRequired {
-            return "Allow Altty in Privacy & Security > Input Monitoring, then click Check Readiness."
+            return "Enable Altty in System Settings → Privacy & Security → Input Monitoring. If it is missing, use Show Altty in Finder to locate it."
         }
         if mouseScrollStatus == .unavailable {
             return "Mouse wheel reversal could not start. Check Accessibility and Input Monitoring permissions, then click Check Readiness."

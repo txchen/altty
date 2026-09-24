@@ -70,7 +70,6 @@ final class ExceptionsSettingsViewController: NSViewController,
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.widthAnchor.constraint(equalToConstant: 430).isActive = true
         scroll.heightAnchor.constraint(equalToConstant: 250).isActive = true
 
         let buttons = NSStackView(views: [
@@ -89,6 +88,7 @@ final class ExceptionsSettingsViewController: NSViewController,
         stack.alignment = .leading
         stack.spacing = 10
         self.view = stack
+        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         updateButtons()
     }
 
