@@ -86,3 +86,19 @@ the local AppKit path with two disposable windows. It checks 20 exact focus
 sequences and four minimized restorations, then restores the previously focused
 window. Before the local-PID scheduler fix, the same production AXRaise call
 terminated the probe with SIGTRAP. This check is separate from remote-app focus.
+
+## Shortcuts becoming unresponsive
+
+`ALTTY_SWIFT_BUILD_SYSTEM=native scripts/test.sh --filter SwitcherReentrancyTests`
+holds inventory responses across focus completion, confirmation, navigation and
+session replacement. The pre-fix engine resurrects a completed `verifying`
+session, blocking subsequent shortcuts indefinitely.
+
+For diagnostic capture, first enable General → Diagnostics → Enable diagnostic
+logging (off by default). For physical QA, mix quick Option-Tab taps, held Tab navigation, Shift-only
+backward steps and Option-Grave while windows open/close. Both modes must remain
+responsive after release. On recurrence, preserve the process and inspect Unified
+Log subsystem `app.altty.macos`, category `Shortcut`: `physical_press`,
+`carbon_press`, `queued`, `handling`, `wait`, `wait_resumed`, `invoked`, `end`.
+These stages contain no window titles or ordinary typed input. A passing actor
+race regression does not prove all global-input failure modes are resolved.

@@ -386,9 +386,14 @@ final class SwitcherEngine {
             return effects
         }
         guard eventCanInvalidateCapturedCandidates(event),
-              let session = activeSwitchSession else { return effects }
+              let transactionID = activeSwitchSession?.transactionID else { return effects }
 
         let snapshot = await inventory.snapshot()
+        // The actor hop can overlap focus completion, confirmation, navigation,
+        // or cancellation. Never resurrect a captured session or roll its phase
+        // back; reconcile only the current state of the same transaction.
+        guard let session = activeSwitchSession,
+              session.transactionID == transactionID else { return effects }
         let liveIdentities = snapshot.liveIdentities
         if snapshot.generation != session.target.generation {
             effects.append(contentsOf: endSessionEffects())
@@ -428,7 +433,9 @@ final class SwitcherEngine {
     /// Synchronous boundary: an invocation already awaiting the actor must also fail closed.
     func waitForCommittedSwitch() async {
         guard let session = activeSwitchSession, session.phase != .waitingForModifierRelease else { return }
+        ShortcutDiagnostics.record("wait transaction=\(session.transactionID) phase=\(session.phase)")
         await withCheckedContinuation { committedSwitchWaiters.append($0) }
+        ShortcutDiagnostics.record("wait_resumed transaction=\(session.transactionID)")
     }
 
     func invalidateActiveSpace() -> [SwitcherEffect] {
@@ -607,6 +614,7 @@ final class SwitcherEngine {
                 pid: session.target.pid
             ) else { return failActiveSwitch(session) }
             _ = await inventory.apply(.focused(session.target.identity))
+            guard activeSwitchSession?.transactionID == session.transactionID else { return [] }
             return endSessionEffects()
         }
     }
@@ -739,7 +747,8 @@ final class SwitcherEngine {
         let reconciled = GeneralSettings(
             launchAtLogin: isEnabled,
             listPresentation: displayed.listPresentation,
-            reverseMouseWheel: displayed.reverseMouseWheel
+            reverseMouseWheel: displayed.reverseMouseWheel,
+            diagnosticLoggingEnabled: displayed.diagnosticLoggingEnabled
         )
         presentationState.generalSettings.pending = reconciled
         return [.persistSettings(settingsSnapshot(source: .current, general: reconciled))]
@@ -924,6 +933,9 @@ final class SwitcherEngine {
     private func endSessionEffects(
         additional: [SwitcherEffect] = []
     ) -> [SwitcherEffect] {
+        if let session = activeSwitchSession {
+            ShortcutDiagnostics.record("end transaction=\(session.transactionID) phase=\(session.phase) waiters=\(committedSwitchWaiters.count)")
+        }
         activeSwitchSession = nil
         let waiters = committedSwitchWaiters
         committedSwitchWaiters.removeAll()

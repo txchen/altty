@@ -5,11 +5,13 @@ private final class SettingsDocumentView: NSView {
     override var isFlipped: Bool { true }
 }
 
-private extension ListDensity {
+private extension ListSize {
     var title: String {
         switch self {
-        case .compact: "Compact"
-        case .comfortable: "Comfortable"
+        case .small: "Small"
+        case .medium: "Medium"
+        case .large: "Large"
+        case .auto: "Auto"
         }
     }
 }
@@ -74,19 +76,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         target: self,
         action: #selector(generalControlsChanged)
     )
-    private lazy var visibleRowsPopUp: NSPopUpButton = {
-        let control = NSPopUpButton()
-        control.addItems(withTitles: ["6 rows", "7 rows", "8 rows"])
-        control.target = self
-        control.action = #selector(generalControlsChanged)
-        return control
-    }()
     private lazy var mouseScrollCheckbox = NSButton(
         checkboxWithTitle: "Reverse mouse wheel direction",
         target: self,
         action: #selector(generalControlsChanged)
     )
     private let mouseScrollMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private lazy var diagnosticLoggingCheckbox = NSButton(
+        checkboxWithTitle: "Enable diagnostic logging",
+        target: self,
+        action: #selector(generalControlsChanged)
+    )
     private lazy var inputMonitoringButton = NSButton(
         title: "Allow Input Monitoring…",
         target: self,
@@ -94,9 +94,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     )
     private lazy var revealApplicationButton = NSButton(title: "Show Altty in Finder", target: self, action: #selector(revealApplication))
     private lazy var mousePermissionActions = NSStackView(views: [inputMonitoringButton, revealApplicationButton])
-    private lazy var densityPopUp: NSPopUpButton = {
+    private lazy var sizePopUp: NSPopUpButton = {
         let control = NSPopUpButton()
-        control.addItems(withTitles: ListDensity.allCases.map(\.title))
+        control.addItems(withTitles: ListSize.allCases.map(\.title))
         control.target = self
         control.action = #selector(generalControlsChanged)
         return control
@@ -163,8 +163,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         inputMonitoringButton.setAccessibilityLabel("Allow Altty Input Monitoring")
         inputMonitoringButton.isHidden = true
         mouseScrollMessageLabel.isHidden = true
-        visibleRowsPopUp.setAccessibilityLabel("Visible switcher rows")
-        densityPopUp.setAccessibilityLabel("Switcher row spacing")
+        sizePopUp.setAccessibilityLabel("Switcher list size")
         openLoginItemsButton.setAccessibilityLabel("Open Login Items Settings")
         configureSidebar(on: window)
         showPane(.general)
@@ -281,9 +280,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         detail.font = .systemFont(ofSize: 12)
         if pane == .general {
             stack.addArrangedSubview(card("Startup", views: [launchAtLoginCheckbox, generalMessageLabel, openLoginItemsButton]))
+            let sizeDetail = NSTextField(wrappingLabelWithString: "The list grows to fit up to 80% of the screen height. Auto uses the largest size that fits your windows.")
+            sizeDetail.font = .systemFont(ofSize: 12)
+            sizeDetail.textColor = .secondaryLabelColor
             stack.addArrangedSubview(card("Window list", views: [
-                formRow(label: "Visible rows", control: visibleRowsPopUp),
-                formRow(label: "Row spacing", control: densityPopUp),
+                formRow(label: "Size", control: sizePopUp),
+                sizeDetail,
             ]))
             let mouseDetail = NSTextField(wrappingLabelWithString: "Trackpad scrolling stays unchanged.")
             mouseDetail.font = .systemFont(ofSize: 12)
@@ -297,6 +299,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             accessibilityDetailLabel.textColor = .secondaryLabelColor
             let permissionActions = NSStackView(views: [accessibilityButton, recheckButton])
             stack.addArrangedSubview(card("Permissions", views: [statusLabel, accessibilityDetailLabel, permissionActions]))
+            let loggingDetail = NSTextField(wrappingLabelWithString: "Record detailed logs for troubleshooting. Ordinary typing and window titles are not recorded. Essential error reports stay enabled.")
+            loggingDetail.font = .systemFont(ofSize: 12)
+            loggingDetail.textColor = .secondaryLabelColor
+            stack.addArrangedSubview(card("Diagnostics", views: [diagnosticLoggingCheckbox, loggingDetail]))
             generalMessageLabel.textColor = .systemOrange
             generalMessageLabel.font = .systemFont(ofSize: 12)
             configureGeneralKeyViewLoop()
@@ -402,19 +408,19 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     }
 
     func toggleMouseScrollReversal() { mouseScrollCheckbox.performClick(nil) }
+    func toggleDiagnosticLogging() { diagnosticLoggingCheckbox.performClick(nil) }
 
     @objc private func generalControlsChanged() {
-        guard (0..<3).contains(visibleRowsPopUp.indexOfSelectedItem),
-              ListDensity.allCases.indices.contains(densityPopUp.indexOfSelectedItem) else {
+        guard ListSize.allCases.indices.contains(sizePopUp.indexOfSelectedItem) else {
             return
         }
         replaceGeneralSettings(GeneralSettings(
             launchAtLogin: launchAtLoginCheckbox.state == .on,
             listPresentation: ListPresentationPreferences(
-                visibleRowCount: visibleRowsPopUp.indexOfSelectedItem + 6,
-                density: ListDensity.allCases[densityPopUp.indexOfSelectedItem]
+                size: ListSize.allCases[sizePopUp.indexOfSelectedItem]
             ),
-            reverseMouseWheel: mouseScrollCheckbox.state == .on
+            reverseMouseWheel: mouseScrollCheckbox.state == .on,
+            diagnosticLoggingEnabled: diagnosticLoggingCheckbox.state == .on
         ))
     }
 
@@ -423,9 +429,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         generalInlineMessage = state.inlineMessage
         launchAtLoginCheckbox.state = state.displayed.launchAtLogin ? .on : .off
         mouseScrollCheckbox.state = state.displayed.reverseMouseWheel ? .on : .off
-        visibleRowsPopUp.selectItem(at: state.displayed.listPresentation.visibleRowCount - 6)
-        densityPopUp.selectItem(at: ListDensity.allCases.firstIndex(
-            of: state.displayed.listPresentation.density
+        diagnosticLoggingCheckbox.state = state.displayed.diagnosticLoggingEnabled ? .on : .off
+        sizePopUp.selectItem(at: ListSize.allCases.firstIndex(
+            of: state.displayed.listPresentation.size
         ) ?? 0)
         generalMessageLabel.stringValue = state.inlineMessage ?? ""
         generalMessageLabel.isHidden = state.inlineMessage == nil
@@ -439,10 +445,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         launchAtLoginCheckbox.nextKeyView = mouseScrollCheckbox
         mouseScrollCheckbox.nextKeyView = inputMonitoringButton
         inputMonitoringButton.nextKeyView = revealApplicationButton
-        revealApplicationButton.nextKeyView = visibleRowsPopUp
-        visibleRowsPopUp.nextKeyView = densityPopUp
-        densityPopUp.nextKeyView = openLoginItemsButton
-        openLoginItemsButton.nextKeyView = sidebar
+        revealApplicationButton.nextKeyView = sizePopUp
+        sizePopUp.nextKeyView = openLoginItemsButton
+        openLoginItemsButton.nextKeyView = diagnosticLoggingCheckbox
+        diagnosticLoggingCheckbox.nextKeyView = sidebar
     }
 
     private func card(_ title: String, views: [NSView]) -> NSView {

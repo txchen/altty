@@ -33,7 +33,7 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
         let general: General
     }
 
-    private struct VersionFourSettings: Decodable {
+    private struct CurrentSettingsDocument: Decodable {
         let shortcuts: ShortcutPair
         let exceptionRules: [LossyExceptionRule]
         let general: GeneralSettings
@@ -82,7 +82,7 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
                 )
             }
 
-            let current: VersionFourSettings
+            let current: CurrentSettingsDocument
             switch version {
             case 1:
                 let settings = try decoder.decode(VersionOneSettings.self, from: data)
@@ -96,7 +96,7 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
                     try decoder.decode(VersionThreeSettings.self, from: data)
                 )
             default:
-                current = try decoder.decode(VersionFourSettings.self, from: data)
+                current = try decoder.decode(CurrentSettingsDocument.self, from: data)
             }
 
             guard current.shortcuts.validationError == nil else {
@@ -167,8 +167,8 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
         )
     }
 
-    private func migrateToVersionFour(_ settings: VersionThreeSettings) -> VersionFourSettings {
-        VersionFourSettings(
+    private func migrateToVersionFour(_ settings: VersionThreeSettings) -> CurrentSettingsDocument {
+        CurrentSettingsDocument(
             shortcuts: settings.shortcuts,
             exceptionRules: settings.exceptionRules,
             general: GeneralSettings(

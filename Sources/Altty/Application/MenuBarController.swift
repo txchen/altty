@@ -68,7 +68,8 @@ final class MenuBarController: NSObject {
         onCommand(.replaceGeneralSettings(GeneralSettings(
             launchAtLogin: generalSettings.launchAtLogin,
             listPresentation: generalSettings.listPresentation,
-            reverseMouseWheel: !generalSettings.reverseMouseWheel)))
+            reverseMouseWheel: !generalSettings.reverseMouseWheel,
+            diagnosticLoggingEnabled: generalSettings.diagnosticLoggingEnabled)))
     }
     @objc private func openSettings() { onCommand(.openSettings) }
     @objc private func requestAccessibility() { onCommand(.requestAccessibility) }

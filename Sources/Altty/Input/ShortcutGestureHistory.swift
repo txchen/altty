@@ -35,6 +35,7 @@ final class ShortcutGestureHistory: @unchecked Sendable {
             sequence &+= 1
             presses.append(Press(sequence: sequence, registration: binding.id, time: time,
                                  hold: modifiers.intersection(.required)))
+            ShortcutDiagnostics.record("physical_press registration=\(binding.id) sequence=\(sequence)")
             if presses.count > capacity { presses.removeFirst(presses.count - capacity) }
         }
     }

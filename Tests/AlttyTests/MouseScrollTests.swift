@@ -161,7 +161,7 @@ struct MouseScrollTests {
         let url = directory.appendingPathComponent("settings.json")
         let persistence = FileSettingsPersistenceAdapter(settingsURL: url)
         let general = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(visibleRowCount: 8, density: .comfortable), reverseMouseWheel: true)
+            listPresentation: .init(size: .medium), reverseMouseWheel: true)
         let snapshot = SettingsSnapshot(shortcuts: .defaults, general: general)
         try persistence.saveSettings(snapshot)
         #expect(persistence.loadSettings() == .init(snapshot: snapshot, warning: nil))
@@ -173,7 +173,7 @@ struct MouseScrollTests {
         try JSONSerialization.data(withJSONObject: json).write(to: url)
         let migrated = persistence.loadSettings()
         #expect(migrated.warning == nil)
-        #expect(migrated.snapshot.version == 4)
+        #expect(migrated.snapshot.version == 5)
         #expect(migrated.snapshot.general.launchAtLogin)
         #expect(migrated.snapshot.general.listPresentation == general.listPresentation)
         #expect(!migrated.snapshot.general.reverseMouseWheel)

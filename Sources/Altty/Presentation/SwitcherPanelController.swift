@@ -71,6 +71,22 @@ final class SystemSwitcherDisplayProvider: SwitcherDisplayProviding {
     }
 }
 
+struct SwitcherListLayout {
+    let size: ListSize
+    let visibleRowCapacity: Int
+    let height: CGFloat
+
+    init(rowCount: Int, preference: ListSize, screenHeight: CGFloat, visibleHeight: CGFloat) {
+        let maximumHeight = max(0, min(screenHeight * 0.8, visibleHeight))
+        let candidates: [ListSize] = preference == .auto ? [.large, .medium, .small] : [preference]
+        size = candidates.first { 50 + CGFloat(max(rowCount, 1)) * ($0.rowHeight + 2) <= maximumHeight }
+            ?? candidates.last!
+        let stride = CGFloat(size.rowHeight + 2)
+        visibleRowCapacity = max(1, Int(max(0, maximumHeight - 50) / stride))
+        height = min(maximumHeight, 50 + CGFloat(min(max(rowCount, 1), visibleRowCapacity)) * stride)
+    }
+}
+
 @MainActor
 final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var onInteraction: ((SwitcherSessionEvent) -> Void)?
@@ -83,6 +99,8 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
     private let scrollView = NSScrollView()
     private let displayProvider: any SwitcherDisplayProviding
     private var displayIdentifier: String?
+    private var resolvedSize: ListSize = .large
+    private var visibleRowCapacity = 0
 
     var observedState: SwitcherPanelObservedState {
         SwitcherPanelObservedState(
@@ -104,7 +122,7 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
             },
             displayIdentifier: displayIdentifier,
             panelFrame: panel.frame,
-            visibleRowCapacity: state?.listPresentation.visibleRowCount ?? 0,
+            visibleRowCapacity: visibleRowCapacity,
             selectedRowIsVisible: selectedRowIsVisible
         )
     }
@@ -147,16 +165,18 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
             shortcutLabel.stringValue = state.shortcutDescription
         }
         let structureChanged = previous?.rows.map(\.identity) != state.rows.map(\.identity)
-        let layoutChanged = previous?.listPresentation != state.listPresentation
-        if layoutChanged { tableView.rowHeight = rowHeight(for: state.listPresentation.density) }
+        let oldSize = resolvedSize
+        let preferencesChanged = previous?.listPresentation != state.listPresentation
+        if structureChanged || preferencesChanged {
+            resizeForRows(state.rows.count, preferences: state.listPresentation)
+        }
+        let layoutChanged = preferencesChanged || resolvedSize != oldSize
+        tableView.rowHeight = CGFloat(resolvedSize.rowHeight)
         if structureChanged || layoutChanged {
             tableView.reloadData()
         } else if let previous {
             let changed = IndexSet(state.rows.indices.filter { previous.rows[$0] != state.rows[$0] })
             if !changed.isEmpty { tableView.reloadData(forRowIndexes: changed, columnIndexes: IndexSet(integer: 0)) }
-        }
-        if structureChanged || layoutChanged {
-            resizeForRows(state.rows.count, preferences: state.listPresentation)
         }
         if let selectedRow = state.rows.firstIndex(where: { $0.identity == state.selectedIdentity }) {
             if tableView.selectedRow != selectedRow {
@@ -258,8 +278,16 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
     }
 
     private func makeRow(for rowState: SwitcherPanelRow) -> NSView {
-        let comfortable = state?.listPresentation.density != .compact
-        let iconSize: CGFloat = comfortable ? 36 : 32
+        let iconSize: CGFloat = switch resolvedSize {
+        case .small: 32
+        case .medium: 36
+        case .large, .auto: 40
+        }
+        let titleSize: CGFloat = switch resolvedSize {
+        case .small: 13
+        case .medium: 14
+        case .large, .auto: 16
+        }
         let applicationIcon = rowState.applicationBundlePath.map {
             NSWorkspace.shared.icon(forFile: $0)
         }
@@ -275,12 +303,12 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         ])
 
         let title = NSTextField(labelWithString: rowState.title)
-        title.font = .systemFont(ofSize: comfortable ? 14 : 13, weight: .medium)
+        title.font = .systemFont(ofSize: titleSize, weight: .medium)
         title.lineBreakMode = .byTruncatingTail
         title.maximumNumberOfLines = 1
 
         let subtitle = NSTextField(labelWithString: rowState.applicationName)
-        subtitle.font = .systemFont(ofSize: comfortable ? 12 : 11)
+        subtitle.font = .systemFont(ofSize: resolvedSize == .small ? 11 : 12)
         subtitle.textColor = .secondaryLabelColor
         subtitle.lineBreakMode = .byTruncatingTail
         subtitle.maximumNumberOfLines = 1
@@ -350,23 +378,17 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
         )
     }
 
-    private func rowHeight(for density: ListDensity) -> CGFloat {
-        density == .compact ? 52 : 60
+    private func resizeForRows(_ rowCount: Int, preferences: ListPresentationPreferences) {
+        let display = state.flatMap(preferredDisplay(for:))
+        let layout = SwitcherListLayout(rowCount: rowCount, preference: preferences.size,
+            screenHeight: display?.frame.height ?? 800,
+            visibleHeight: display?.visibleFrame.height ?? 800)
+        resolvedSize = layout.size
+        visibleRowCapacity = layout.visibleRowCapacity
+        panel.setContentSize(NSSize(width: 520, height: layout.height))
     }
 
-    private func resizeForRows(
-        _ rowCount: Int,
-        preferences: ListPresentationPreferences
-    ) {
-        let visibleRows = min(max(rowCount, 1), preferences.visibleRowCount)
-        let rowHeight = rowHeight(for: preferences.density)
-        panel.setContentSize(NSSize(
-            width: 520,
-            height: 50 + CGFloat(visibleRows) * (rowHeight + 2)
-        ))
-    }
-
-    private func placePanel(state: SwitcherPanelState) {
+    private func preferredDisplay(for state: SwitcherPanelState) -> SwitcherDisplay? {
         let displays = displayProvider.displays
         let invokingDisplay = state.invokingWindowIdentity
             .flatMap(displayProvider.frame(of:))
@@ -382,11 +404,14 @@ final class SwitcherPanelController: NSObject, NSTableViewDataSource, NSTableVie
                     .max { $0.overlap < $1.overlap }?
                     .display
             }
-        let display = displays.first { $0.frame.contains(displayProvider.pointerLocation) }
+        return displays.first { $0.frame.contains(displayProvider.pointerLocation) }
             ?? invokingDisplay
             ?? displays.first(where: \.isPrimary)
             ?? displays.first
-        guard let display else { return }
+    }
+
+    private func placePanel(state: SwitcherPanelState) {
+        guard let display = preferredDisplay(for: state) else { return }
         let visibleFrame = display.visibleFrame
         let size = CGSize(
             width: min(panel.frame.width, visibleFrame.width),

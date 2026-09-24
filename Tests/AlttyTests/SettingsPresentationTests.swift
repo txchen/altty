@@ -5,6 +5,28 @@ import Testing
 
 @MainActor
 struct SettingsPresentationTests {
+    @Test func loggingCheckboxPreservesOtherSettingsAndRestoresItsSavedState() {
+        _ = NSApplication.shared
+        var commands: [SwitcherCommand] = []
+        let controller = SettingsWindowController(exceptions: RecordingExceptionsAdapter()) {
+            commands.append($0)
+        }
+        defer { controller.close() }
+        var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .available)
+        let original = GeneralSettings(launchAtLogin: true,
+            listPresentation: .init(size: .medium), reverseMouseWheel: true)
+        let enabled = GeneralSettings(launchAtLogin: true, listPresentation: original.listPresentation,
+            reverseMouseWheel: true, diagnosticLoggingEnabled: true)
+        state.generalSettings.current = original
+        controller.update(state: state)
+        controller.toggleDiagnosticLogging()
+        #expect(commands.last == .replaceGeneralSettings(enabled))
+        state.generalSettings.current = enabled
+        controller.update(state: state)
+        controller.toggleDiagnosticLogging()
+        #expect(commands.last == .replaceGeneralSettings(original))
+    }
+
     @Test func mouseScrollCheckboxPreservesOtherSettingsAndExplainsPermissionRecovery() {
         _ = NSApplication.shared
         var commands: [SwitcherCommand] = []
@@ -13,13 +35,13 @@ struct SettingsPresentationTests {
         }
         var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .unavailable)
         state.generalSettings.current = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(visibleRowCount: 8, density: .comfortable))
+            listPresentation: .init(size: .medium))
         controller.update(state: state)
         #expect(controller.observedState.mouseScrollControlTitle == "Reverse mouse wheel direction")
         #expect(controller.observedState.mouseScrollMessage == nil)
         controller.toggleMouseScrollReversal()
         let enabled = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(visibleRowCount: 8, density: .comfortable), reverseMouseWheel: true)
+            listPresentation: .init(size: .medium), reverseMouseWheel: true)
         #expect(commands == [.replaceGeneralSettings(enabled)])
         state.generalSettings.current = enabled
         state.generalSettings.mouseScrollStatus = .inputMonitoringRequired
@@ -32,7 +54,7 @@ struct SettingsPresentationTests {
         #expect(controller.observedState.mouseScrollMessage == nil)
         controller.toggleMouseScrollReversal()
         #expect(commands.last == .replaceGeneralSettings(GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(visibleRowCount: 8, density: .comfortable))))
+            listPresentation: .init(size: .medium))))
         controller.close()
     }
 
@@ -64,7 +86,7 @@ struct SettingsPresentationTests {
             snapshot: SettingsSnapshot(shortcuts: .defaults, exceptionRules: []),
             warning: nil
         ))
-        #expect(SettingsSnapshot.currentVersion == 4)
+        #expect(SettingsSnapshot.currentVersion == 5)
         #expect(SettingsSnapshot.defaults.general == .defaults)
         try? FileManager.default.removeItem(at: directory)
     }
@@ -99,8 +121,7 @@ struct SettingsPresentationTests {
         let proposed = GeneralSettings(
             launchAtLogin: true,
             listPresentation: ListPresentationPreferences(
-                visibleRowCount: 8,
-                density: .comfortable
+                size: .medium
             )
         )
         let snapshot = SettingsSnapshot(
@@ -248,8 +269,7 @@ struct SettingsPresentationTests {
             selectedIdentity: rows[10].identity,
             invokingWindowIdentity: origin,
             listPresentation: ListPresentationPreferences(
-                visibleRowCount: 6,
-                density: .comfortable
+                size: .medium
             )
         )
         let panel = SwitcherPanelController(displayProvider: provider)
@@ -258,7 +278,7 @@ struct SettingsPresentationTests {
 
         #expect(panel.observedState.displayIdentifier == "secondary")
         #expect(provider.displays[1].visibleFrame.contains(panel.observedState.panelFrame))
-        #expect(panel.observedState.visibleRowCapacity == 6)
+        #expect(panel.observedState.visibleRowCapacity == 5)
         #expect(panel.observedState.selectedRowIsVisible)
         #expect(panel.observedState.rows.allSatisfy { $0.usesSingleLineText })
         #expect(panel.observedState.rows.allSatisfy {
@@ -306,8 +326,7 @@ struct SettingsPresentationTests {
         let proposed = GeneralSettings(
             launchAtLogin: true,
             listPresentation: ListPresentationPreferences(
-                visibleRowCount: 8,
-                density: .comfortable
+                size: .medium
             )
         )
         controller.replaceGeneralSettings(proposed)
@@ -349,7 +368,7 @@ struct SettingsPresentationTests {
         defer { menu.uninstall() }
         var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .available)
         let original = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(visibleRowCount: 8, density: .comfortable), reverseMouseWheel: false)
+            listPresentation: .init(size: .medium), reverseMouseWheel: false)
         state.generalSettings.current = original
         menu.update(state: state)
         #expect(!menu.observedState.mouseScrollReversed)

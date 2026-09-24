@@ -364,6 +364,7 @@ final class SystemInputAdapter: InputAdapter {
 
     @discardableResult
     func hotKeyPressed(id: UInt32) -> Bool {
+        ShortcutDiagnostics.record("carbon_press registration=\(id) enabled=\(shortcutsEnabled)")
         guard shortcutsEnabled,
               let registration = activeRegistrations.first(where: {
                   $0.hotKey.id == id
@@ -372,7 +373,10 @@ final class SystemInputAdapter: InputAdapter {
         // can overtake the main-thread delivery of physical Shift changes.
         confirmPhysicalRelease()
         if let gestureHistory {
-            guard let sequence = gestureHistory.claim(registration: id) else { return false }
+            guard let sequence = gestureHistory.claim(registration: id) else {
+                ShortcutDiagnostics.record("unmatched_press registration=\(id)")
+                return false
+            }
             activePhysicalPress = sequence
         }
         shortcutIsActive = true

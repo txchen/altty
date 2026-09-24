@@ -1564,8 +1564,7 @@ struct SwitcherPanelTests {
             let mode: SwitcherMode = iteration.isMultiple(of: 3) ? .currentApp : .allWindows
             panel.show(state: .init(mode: mode, shortcutDescription: "⌥Tab", rows: currentRows,
                                    selectedIdentity: currentRows[selected].identity,
-                                   listPresentation: .init(visibleRowCount: 7,
-                                       density: iteration.isMultiple(of: 2) ? .compact : .comfortable)))
+                                   listPresentation: .init(size: iteration.isMultiple(of: 2) ? .small : .medium)))
             #expect(panel.observedState.selectedRowIsVisible)
             panel.dismiss()
             await Task.yield()
@@ -1640,7 +1639,7 @@ struct SwitcherPanelTests {
         ])
         #expect(observed.displayIdentifier != nil)
         #expect(observed.panelFrame != .zero)
-        #expect(observed.visibleRowCapacity == 7)
+        #expect(observed.visibleRowCapacity >= observed.rowCount)
         #expect(observed.selectedRowIsVisible)
 
         let firstRowLocation = panel.tableView.convert(

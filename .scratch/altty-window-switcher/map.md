@@ -21,6 +21,12 @@ The specification must settle user behavior, window discovery and focus semantic
 
 ## Decisions so far
 
+- [Adaptive list height and size](issues/44-adaptive-list-height-and-size.md) — Both modes grow to an 80% screen-height cap; replace fixed row count/density with AltTab-style Small/Medium/Large/Auto sizes. Legacy density choices migrate without retaining their old row limit.
+
+- [Configurable diagnostic logging](issues/43-configurable-diagnostic-logging.md) — General settings expose a persisted, default-off diagnostic logging checkbox with immediate effect; disabled detailed logging skips string construction, while necessary errors remain enabled.
+
+- [Prevent stalled shortcut transactions](issues/42-prevent-stalled-shortcut-transactions.md) — Inventory actor responses revalidate the transaction and read the latest session; stale snapshots cannot resurrect completed focus or roll back confirmation. Build 2026092307 passes deterministic races and real focus fixtures. After user reauthorization, 38 live Option-Tab presses reached Carbon and all 13 sessions ended; Current-App and longer-term recurrence remain unproven.
+
 - [41 — self-window crash](issues/41-fix-switching-to-own-settings-window.md): in-process AX calls enter AppKit directly and must run on MainActor; remote AX remains isolated on workers.
 
 - [40 — settings and menu polish](issues/40-polish-settings-and-menu.md): one shared mouse reversal preference in menu and Settings; Homebrew-managed updates; card layouts and native permission requests with exact-bundle Finder recovery.

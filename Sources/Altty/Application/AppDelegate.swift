@@ -89,17 +89,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func receive(_ event: ShortcutEvent) {
+        ShortcutDiagnostics.record("queued event=\(event)")
         let revision = inventoryRefresh.revision
         let previous = shortcutInvocationTask
         shortcutInvocationTask = Task { [weak self] in
             await previous?.value
             guard let self, !Task.isCancelled, self.inventoryRefresh.isCurrent(revision) else { return }
+            ShortcutDiagnostics.record("handling event=\(event)")
             switch event {
             case let .switcherPressed(mode, direction):
                 await self.environment.engine.waitForCommittedSwitch()
                 guard !Task.isCancelled, self.inventoryRefresh.isCurrent(revision) else { return }
                 if self.environment.engine.activeSwitchSession == nil { self.shortcutPerformance.beginIfNeeded() }
                 let effects = await self.environment.engine.invokeSwitch(mode: mode, direction: direction)
+                ShortcutDiagnostics.record("invoked effects=\(effects.count) transaction=\(self.environment.engine.activeSwitchSession?.transactionID ?? 0)")
                 guard self.inventoryRefresh.isCurrent(revision) else { return }
                 self.run(effects)
             case let .navigate(direction):
@@ -256,6 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case let .persistSettings(snapshot):
                 do {
                     try environment.persistence.saveSettings(snapshot)
+                    DiagnosticLogging.shared.setEnabled(snapshot.general.diagnosticLoggingEnabled)
                     run(environment.engine.receiveSettingsPersistence(.saved(snapshot)))
                 } catch {
                     run(environment.engine.receiveSettingsPersistence(.failed(snapshot)))

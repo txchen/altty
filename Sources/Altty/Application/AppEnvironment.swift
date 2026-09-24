@@ -20,13 +20,15 @@ struct AppEnvironment {
         let inventory = WindowInventory()
         let persistence = FileSettingsPersistenceAdapter()
         let settings = persistence.loadSettings()
+        DiagnosticLogging.shared.setEnabled(settings.snapshot.general.diagnosticLoggingEnabled)
         let workspace = SystemWorkspaceAdapter()
         let launchAtLogin = SystemLaunchAtLoginAdapter()
         let launchAtLoginStatus = launchAtLogin.status
         let generalSettings = GeneralSettings(
             launchAtLogin: launchAtLoginStatus == .enabled,
             listPresentation: settings.snapshot.general.listPresentation,
-            reverseMouseWheel: settings.snapshot.general.reverseMouseWheel
+            reverseMouseWheel: settings.snapshot.general.reverseMouseWheel,
+            diagnosticLoggingEnabled: settings.snapshot.general.diagnosticLoggingEnabled
         )
         return AppEnvironment(
             engine: SwitcherEngine(
