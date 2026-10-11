@@ -17,15 +17,18 @@ protocol HotKeyRegistrar: AnyObject {
 }
 
 @MainActor
-private final class CarbonHotKeyRegistrar: HotKeyRegistrar {
+final class CarbonHotKeyRegistrar: HotKeyRegistrar {
+    private let signature: OSType
     private var references: [UInt32: EventHotKeyRef] = [:]
+
+    init(signature: OSType = alttyHotKeySignature) { self.signature = signature }
 
     func register(_ hotKey: RegisteredHotKey) -> Bool {
         var reference: EventHotKeyRef?
         let status = RegisterEventHotKey(
             hotKey.keyCode,
             hotKey.modifiers,
-            EventHotKeyID(signature: alttyHotKeySignature, id: hotKey.id),
+            EventHotKeyID(signature: signature, id: hotKey.id),
             GetApplicationEventTarget(),
             0,
             &reference

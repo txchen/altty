@@ -107,3 +107,74 @@ struct HintModeSettingsPersistenceTests {
         #expect(HintModeSettings.disabled.validationError(against: pair) == nil)
     }
 }
+
+@MainActor
+struct CarbonHintShortcutAdapterTests {
+    @Test func setShortcutConvergesAndSkipsRedundantRegistration() {
+        let registrar = HintRecordingRegistrar()
+        let adapter = CarbonHintShortcutAdapter(registrar: registrar, installsEventHandler: false)
+        var presses = 0
+        adapter.install { presses += 1 }
+
+        #expect(adapter.setShortcut(nil))
+        #expect(registrar.operations.isEmpty)
+        #expect(adapter.setShortcut(hintF))
+        #expect(adapter.setShortcut(hintF))
+        #expect(registrar.operations == [.registered(hintF.key!.keyCode, hintF.modifiers.carbonValue)])
+        #expect(adapter.hotKeyPressed(id: registrar.registeredIDs.first!))
+        #expect(presses == 1)
+
+        let other = ShortcutBinding(key: ShortcutKey(keyCode: UInt32(kVK_ANSI_J), displayName: "J"), modifiers: [.command])
+        #expect(adapter.setShortcut(other))
+        #expect(registrar.registeredIDs.count == 1)
+        #expect(adapter.setShortcut(nil))
+        #expect(adapter.setShortcut(nil))
+        #expect(registrar.registeredIDs.isEmpty)
+        #expect(registrar.operations.count == 4)
+        #expect(!adapter.hotKeyPressed(id: 1))
+        #expect(presses == 1)
+    }
+
+    @Test func registrationFailureLeavesNothingRegisteredAndRetriesLater() {
+        let registrar = HintRecordingRegistrar()
+        let adapter = CarbonHintShortcutAdapter(registrar: registrar, installsEventHandler: false)
+        #expect(adapter.setShortcut(hintF))
+        registrar.unavailableKeyCode = UInt32(kVK_ANSI_J)
+        let taken = ShortcutBinding(key: ShortcutKey(keyCode: UInt32(kVK_ANSI_J), displayName: "J"), modifiers: [.command])
+        #expect(!adapter.setShortcut(taken))
+        #expect(registrar.registeredIDs.isEmpty)
+        #expect(adapter.registeredShortcut == nil)
+        #expect(!adapter.hotKeyPressed(id: 1))
+
+        registrar.unavailableKeyCode = nil
+        #expect(adapter.setShortcut(taken))
+        #expect(registrar.registeredIDs.count == 1)
+        #expect(!adapter.setShortcut(ShortcutBinding(key: nil, modifiers: [.command])))
+        #expect(registrar.registeredIDs.isEmpty)
+    }
+}
+
+@MainActor
+private final class HintRecordingRegistrar: HotKeyRegistrar {
+    enum Operation: Equatable {
+        case registered(UInt32, UInt32)
+        case unregistered(UInt32)
+    }
+
+    var unavailableKeyCode: UInt32?
+    var operations: [Operation] = []
+    private(set) var registeredIDs: Set<UInt32> = []
+
+    func register(_ hotKey: RegisteredHotKey) -> Bool {
+        guard hotKey.keyCode != unavailableKeyCode, !registeredIDs.contains(hotKey.id) else { return false }
+        registeredIDs.insert(hotKey.id)
+        operations.append(.registered(hotKey.keyCode, hotKey.modifiers))
+        return true
+    }
+
+    func unregister(id: UInt32) -> Bool {
+        registeredIDs.remove(id)
+        operations.append(.unregistered(id))
+        return true
+    }
+}
