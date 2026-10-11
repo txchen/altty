@@ -169,6 +169,12 @@ struct HintTreeWalk<Reader: HintTreeReading> {
         visit(root, info: info, clip: clip, depth: 0)
     }
 
+    /// Walks a root whose attributes the caller already read.
+    mutating func walk(_ root: Reader.Element, info: HintNodeInfo, clip: CGRect) {
+        guard !isStopped else { return }
+        visit(root, info: info, clip: clip, depth: 0)
+    }
+
     private mutating func read(_ element: Reader.Element) -> HintNodeInfo? {
         guard !isStopped else { return nil }
         visits += 1

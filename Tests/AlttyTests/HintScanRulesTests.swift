@@ -1,3 +1,4 @@
+import Foundation
 import CoreGraphics
 import Testing
 @testable import Altty
@@ -176,5 +177,43 @@ struct HintScanRulesTests {
             candidate(6, rect(495, 395, 30, 30), depth: 1),
         ], screens: screens)
         #expect(result.map(\.element) == [3, 1, 5, 2])
+    }
+}
+
+struct HintAppKindTests {
+    @Test func electronIsRecognisedByItsFramework() {
+        let kind = HintAppKind.classify(
+            bundleIdentifier: "com.microsoft.VSCode",
+            frameworkNames: ["Electron Framework.framework", "Squirrel.framework"],
+            hasChromiumAppModeLoader: false
+        )
+        #expect(kind == .electron)
+    }
+
+    @Test func chromiumIsRecognisedByItsLoaderOrBundleIdentifier() {
+        #expect(HintAppKind.classify(
+            bundleIdentifier: "com.example.Browser",
+            frameworkNames: ["Example Framework.framework"],
+            hasChromiumAppModeLoader: true
+        ) == .chromium)
+        for identifier in ["com.google.Chrome", "com.google.Chrome.canary", "com.brave.Browser.beta",
+                           "com.microsoft.edgemac", "com.vivaldi.Vivaldi", "company.thebrowser.Browser",
+                           "org.chromium.Chromium"] {
+            #expect(HintAppKind.classify(bundleIdentifier: identifier, frameworkNames: [],
+                                         hasChromiumAppModeLoader: false) == .chromium)
+        }
+    }
+
+    @Test func otherAppsAreLeftAlone() {
+        #expect(HintAppKind.classify(bundleIdentifier: "com.apple.Safari", frameworkNames: [],
+                                     hasChromiumAppModeLoader: false) == .other)
+        #expect(HintAppKind.classify(bundleIdentifier: nil, frameworkNames: [],
+                                     hasChromiumAppModeLoader: false) == .other)
+        #expect(!HintAppKind.other.buildsTreeLazily)
+        #expect(HintAppKind.electron.buildsTreeLazily && HintAppKind.chromium.buildsTreeLazily)
+    }
+
+    @Test func aMissingBundleIsOther() {
+        #expect(HintAppKind.inspect(bundleURL: URL(fileURLWithPath: "/nonexistent/App.app"), bundleIdentifier: nil) == .other)
     }
 }
