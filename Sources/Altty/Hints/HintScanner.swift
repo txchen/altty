@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Synchronization
 
 struct HintScanResult: Sendable {
     static let empty = HintScanResult(targets: [], sawWebArea: false, visits: 0)
@@ -26,6 +27,7 @@ final class AXHintScanner: HintScanner {
 
     private let queue = DispatchQueue(label: "app.altty.hints.scan", qos: .userInteractive)
     private let primer = HintAppPrimer()
+    private let generation = HintScanGeneration()
 
     func scan(pid: pid_t, completion: @escaping @MainActor @Sendable (HintScanResult) -> Void) {
         guard pid > 0, pid != ProcessInfo.processInfo.processIdentifier else {
@@ -37,10 +39,13 @@ final class AXHintScanner: HintScanner {
         let bundleURL = application?.bundleURL
         let bundleIdentifier = application?.bundleIdentifier
         let primer = primer
+        let generation = generation
+        let current = generation.advance()
         queue.async {
             let result = autoreleasepool {
+                let budget = HintScanBudget(duration: Self.deadline) { generation.isCurrent(current) }
                 let kind = HintAppKind.inspect(bundleURL: bundleURL, bundleIdentifier: bundleIdentifier)
-                return Self.scan(pid: pid, kind: kind, screens: screens, primer: primer)
+                return Self.scan(pid: pid, kind: kind, screens: screens, primer: primer, budget: budget)
             }
             DispatchQueue.main.async { completion(result) }
         }
@@ -50,16 +55,16 @@ final class AXHintScanner: HintScanner {
         pid: pid_t,
         kind: HintAppKind,
         screens: [CGRect],
-        primer: HintAppPrimer
+        primer: HintAppPrimer,
+        budget: HintScanBudget
     ) -> HintScanResult {
-        let budget = HintScanBudget(duration: deadline)
         let application = AXUIElementCreateApplication(pid)
         let restore = primer.prime(application, pid: pid, kind: kind)
         defer { restore() }
         var result = HintScopeScan.run(application: application, screens: screens, budget: budget)
         var retries = 0
         while kind.buildsTreeLazily, !result.sawWebArea, retries < lazyTreeRetries,
-              budget.remainingSeconds > lazyTreeRetryDelay {
+              !budget.isExhausted, budget.remainingSeconds > lazyTreeRetryDelay {
             retries += 1
             Thread.sleep(forTimeInterval: lazyTreeRetryDelay)
             let retry = HintScopeScan.run(application: application, screens: screens, budget: budget)
@@ -163,15 +168,31 @@ private enum HintScopeScan {
     }
 }
 
+/// Starting a scan supersedes the previous one, which stops at its next AX
+/// call instead of delaying the new scan on the serial queue.
+private final class HintScanGeneration: Sendable {
+    private let value = Atomic<Int>(0)
+
+    func advance() -> Int {
+        value.add(1, ordering: .relaxed).newValue
+    }
+
+    func isCurrent(_ generation: Int) -> Bool {
+        value.load(ordering: .relaxed) == generation
+    }
+}
+
 /// The scan's shared deadline. Each AX call gets at most `perCallTimeout`,
-/// capped by what remains. Confined to the scan queue.
-final class HintScanBudget: @unchecked Sendable {
+/// capped by what remains.
+final class HintScanBudget: Sendable {
     static let perCallTimeout: Double = 0.2
 
     private let deadline: ContinuousClock.Instant
+    private let isCurrent: @Sendable () -> Bool
 
-    init(duration: Duration) {
+    init(duration: Duration, isCurrent: @escaping @Sendable () -> Bool = { true }) {
         deadline = .now.advanced(by: duration)
+        self.isCurrent = isCurrent
     }
 
     var remainingSeconds: Double {
@@ -179,11 +200,11 @@ final class HintScanBudget: @unchecked Sendable {
         return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }
 
-    var isExhausted: Bool { remainingSeconds <= 0 }
+    var isExhausted: Bool { remainingSeconds <= 0 || !isCurrent() }
 
     func prepare(_ element: AXUIElement) -> Bool {
         let remaining = remainingSeconds
-        guard remaining > 0 else { return false }
+        guard remaining > 0, isCurrent() else { return false }
         AXUIElementSetMessagingTimeout(element, Float(min(Self.perCallTimeout, remaining)))
         return true
     }
