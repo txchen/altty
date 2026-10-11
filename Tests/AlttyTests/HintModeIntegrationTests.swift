@@ -1,3 +1,4 @@
+import AppKit
 import Carbon
 import Foundation
 import Testing
@@ -323,4 +324,67 @@ struct HintShortcutEngineTests {
         engine.receiveHintShortcutStatus(registered: true)
         #expect(engine.presentationState.generalSettings.hintShortcutMessage == nil)
     }
+}
+
+@MainActor
+struct HintSettingsPresentationTests {
+    @Test func hintControlsSendCommandsAndShowStatus() throws {
+        _ = NSApplication.shared
+        var commands: [SwitcherCommand] = []
+        let controller = SettingsWindowController(exceptions: HintNoExceptions()) { commands.append($0) }
+        defer { controller.close() }
+        var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .unavailable)
+        let original = GeneralSettings(launchAtLogin: true, listPresentation: .init(size: .medium),
+                                       reverseMouseWheel: true, hintMode: .disabled)
+        state.generalSettings.current = original
+        controller.update(state: state)
+        #expect(controller.observedState.hintModeControlTitle == "Enable keyboard hints")
+        #expect(controller.observedState.hintModeMessage == nil)
+        #expect(controller.observedState.hintShortcutTitle == "Record Shortcut")
+        #expect(controller.observedState.hintShortcutMessage == nil)
+        #expect(!controller.observedState.canClearHintShortcut)
+
+        controller.toggleHintMode()
+        let enabledUnbound = GeneralSettings(launchAtLogin: true, listPresentation: .init(size: .medium),
+                                             reverseMouseWheel: true,
+                                             hintMode: HintModeSettings(enabled: true, shortcut: nil))
+        #expect(commands == [.replaceGeneralSettings(enabledUnbound)])
+        state.generalSettings.current = enabledUnbound
+        controller.update(state: state)
+        #expect(controller.observedState.hintModeMessage == "Record a Hint shortcut in Shortcuts to start using hints.")
+
+        let event = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.control, .option, .shift, .command],
+            timestamp: 0, windowNumber: 0, context: nil, characters: "f",
+            charactersIgnoringModifiers: "f", isARepeat: false, keyCode: UInt16(kVK_ANSI_F)
+        ))
+        controller.recordHintShortcut(with: event)
+        #expect(commands.last == .updateHintShortcut(hintF))
+
+        state.generalSettings.current = GeneralSettings(launchAtLogin: true, listPresentation: .init(size: .medium),
+                                                        reverseMouseWheel: true,
+                                                        hintMode: HintModeSettings(enabled: true, shortcut: hintF))
+        state.generalSettings.hintShortcutError = .conflictsWithSwitcher
+        controller.update(state: state)
+        #expect(controller.observedState.hintShortcutTitle == "⌃⌥⇧⌘F")
+        #expect(controller.observedState.canClearHintShortcut)
+        #expect(controller.observedState.hintModeMessage == nil)
+        #expect(controller.observedState.hintShortcutMessage == HintShortcutError.conflictsWithSwitcher.message)
+        controller.clearHintShortcutBinding()
+        #expect(commands.last == .updateHintShortcut(nil))
+
+        state = SwitcherPresentationState(hasLaunched: true, accessibility: .unavailable, windowServer: .available,
+                                          generalSettings: state.generalSettings)
+        controller.update(state: state)
+        #expect(controller.observedState.hintModeMessage == "Keyboard hints need Accessibility permission.")
+        #expect(controller.observedState.generalSettings.hintMode == HintModeSettings(enabled: true, shortcut: hintF))
+    }
+}
+
+@MainActor
+private final class HintNoExceptions: ExceptionsAdapter {
+    func runningExceptionApplications() -> [ExceptionApplication] { [] }
+    func exceptionApplication(bundleIdentifier: String) -> ExceptionApplication? { nil }
+    func exceptionApplication(at bundleURL: URL) -> ExceptionApplication? { nil }
+    func frontmostApplicationBundleIdentifier() -> String? { nil }
 }
