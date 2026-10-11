@@ -9,8 +9,11 @@ protocol HintShortcutAdapter: AnyObject {
 }
 
 /// Owns Hint Sessions: scanning, overlay, keyboard capture and actions.
+/// `setShortcut` mirrors the registered Hint Shortcut so an active session can
+/// recognise its own chord; nil also ends any active session.
 @MainActor
 protocol HintSessionController: AnyObject {
+    func setShortcut(_ binding: ShortcutBinding?)
     func toggleSession()
     func endSession()
 }
