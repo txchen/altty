@@ -54,6 +54,7 @@ while IFS= read -r bundled_file; do
   case "$relative_path" in
     Contents/Info.plist|Contents/MacOS/Altty|Contents/_CodeSignature/CodeResources|Contents/CodeResources) ;;
     Contents/Resources/ThirdParty/ScrollReverser/LICENSE|Contents/Resources/ThirdParty/ScrollReverser/NOTICE) ;;
+    Contents/Resources/AppIcon.icns) ;;
     *) die "unexpected bundle content: $relative_path" ;;
   esac
 done < <(find "$APP" -type f -print)
