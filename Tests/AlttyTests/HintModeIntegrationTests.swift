@@ -310,6 +310,54 @@ struct HintShortcutEngineTests {
         ])
     }
 
+    @Test func hintShortcutMustFitBothTheSavedAndTheStagedSwitcherPair() {
+        let commandTab = ShortcutBinding(key: ShortcutPair.defaults.allWindows.key, modifiers: [.command])
+        let saved = ShortcutPair.defaults.replacing(.allWindows, with: commandTab)
+        let engine = SwitcherEngine(shortcuts: saved, generalSettings: general(.disabled))
+        #expect(engine.send(.updateShortcut(.allWindows, ShortcutPair.defaults.allWindows)) == [
+            .replaceShortcuts(.defaults),
+        ])
+        #expect(engine.send(.updateHintShortcut(commandTab)) == [])
+        #expect(engine.presentationState.generalSettings.hintShortcutError == .conflictsWithSwitcher)
+        #expect(engine.send(.updateHintShortcut(ShortcutPair.defaults.allWindows)) == [])
+        #expect(engine.presentationState.generalSettings.hintShortcutError == .conflictsWithSwitcher)
+    }
+
+    @Test func recoveringDefaultShortcutsClearsAHintShortcutThatWouldCollide() {
+        let control = ShortcutPair(
+            allWindows: ShortcutBinding(key: ShortcutKey(keyCode: UInt32(kVK_ANSI_A), displayName: "A"), modifiers: [.control]),
+            currentApp: ShortcutBinding(key: ShortcutKey(keyCode: UInt32(kVK_ANSI_B), displayName: "B"), modifiers: [.control])
+        )
+        let optionTab = HintModeSettings(enabled: true, shortcut: ShortcutPair.defaults.allWindows)
+        let engine = SwitcherEngine(shortcuts: control, generalSettings: general(optionTab))
+        _ = engine.send(.launch)
+        #expect(hintEffects(engine.receive(.accessibilityChanged(.available))) == [ShortcutPair.defaults.allWindows])
+        let effects = engine.receiveShortcutRegistration(.recoveredWithDefaults(.unavailableShortcut(.allWindows)))
+        let recovered = SettingsSnapshot(
+            shortcuts: .defaults,
+            general: general(HintModeSettings(enabled: true, shortcut: nil))
+        )
+        #expect(effects == [.persistSettings(recovered)])
+        #expect(recovered.isValid)
+        #expect(engine.receiveSettingsPersistence(.saved(recovered)) == [.setHintShortcut(nil)])
+        #expect(engine.presentationState.shortcutSettings.current == .defaults)
+    }
+
+    @Test func savedSettingsReconcileTheHintBeforeNestedReadinessRechecks() {
+        let engine = SwitcherEngine()
+        _ = engine.send(.launch)
+        _ = engine.receive(.accessibilityChanged(.available))
+        let both = GeneralSettings(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true,
+                                   hintMode: HintModeSettings(enabled: true, shortcut: hintF))
+        let snapshot = SettingsSnapshot(shortcuts: .defaults, general: both)
+        #expect(engine.send(.replaceGeneralSettings(both)) == [.persistSettings(snapshot)])
+        #expect(engine.receiveSettingsPersistence(.saved(snapshot)) == [
+            .setHintShortcut(hintF),
+            .setMouseScrollReversalEnabled(true),
+            .requestMouseScrollPermission,
+        ])
+    }
+
     @Test func registrationStatusDrivesTheUnavailableMessage() {
         let engine = SwitcherEngine(generalSettings: general(HintModeSettings(enabled: true, shortcut: hintF)))
         #expect(engine.presentationState.generalSettings.hintModeMessage(accessibility: .unavailable)

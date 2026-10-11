@@ -49,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didWakeNotification,
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceDidActivateApplication),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
         handle(.launch)
     }
 
@@ -188,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { [weak self] in
                     guard let self else { return }
                     self.run(await self.environment.engine.receiveInventory(.clear))
+                    self.refreshUnobservedFrontmostApplication()
                     self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
                 }
             case let .deminimizeWindow(identity):
@@ -625,5 +632,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         environment.diagnostics.recordPerformance(.latency(metric, nanoseconds: nanoseconds))
     }
 
+    private func refreshUnobservedFrontmostApplication() {
+        guard environment.engine.presentationState.hasLaunched, !isMonitoringInventory else { return }
+        run(environment.engine.updateFrontmostApplication(
+            environment.exceptions.frontmostApplicationBundleIdentifier()
+        ))
+    }
+
     @objc private func systemDidWake() { handle(.systemDidWake) }
+    @objc private func workspaceDidActivateApplication() {
+        refreshUnobservedFrontmostApplication()
+        refreshPresentation()
+    }
 }

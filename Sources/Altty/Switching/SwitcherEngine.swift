@@ -707,14 +707,9 @@ final class SwitcherEngine {
         case let .replaceGeneralSettings(settings):
             return replaceGeneralSettings(settings)
         case let .updateHintShortcut(binding):
-            let displayed = presentationState.generalSettings.displayed
-            return replaceGeneralSettings(GeneralSettings(
-                launchAtLogin: displayed.launchAtLogin,
-                listPresentation: displayed.listPresentation,
-                reverseMouseWheel: displayed.reverseMouseWheel,
-                diagnosticLoggingEnabled: displayed.diagnosticLoggingEnabled,
-                hintMode: HintModeSettings(enabled: displayed.hintMode.enabled, shortcut: binding)
-            ))
+            return replaceGeneralSettings(
+                presentationState.generalSettings.displayed.replacingHintShortcut(binding)
+            )
         }
     }
 
@@ -783,9 +778,15 @@ final class SwitcherEngine {
             presentationState.shortcutSettings.pending = .defaults
             presentationState.shortcutSettings.error = nil
             presentationState.shortcutSettings.recoveryWarning = "Saved shortcuts were unavailable, so Altty restored the defaults. \(error.message)"
+            let general = presentationState.generalSettings.current
+            let recoveredGeneral = general.hintMode.validationError(against: .defaults) == nil
+                ? nil
+                : general.replacingHintShortcut(nil)
+            if let recoveredGeneral { presentationState.generalSettings.pending = recoveredGeneral }
             return [.persistSettings(settingsSnapshot(
                 source: .current,
-                shortcuts: .defaults
+                shortcuts: .defaults,
+                general: recoveredGeneral
             ))]
         }
     }
@@ -820,6 +821,7 @@ final class SwitcherEngine {
                 presentationState.generalSettings.error = nil
                 presentationState.generalSettings.recoveryWarning = nil
                 presentationState.generalSettings.launchAtLoginRequiresApproval = false
+                effects.append(contentsOf: reconcileHintShortcut())
                 if mouseScrollChanged {
                     effects.append(.setMouseScrollReversalEnabled(
                         snapshot.general.reverseMouseWheel && presentationState.accessibility == .available
@@ -828,7 +830,6 @@ final class SwitcherEngine {
                         effects.append(.requestMouseScrollPermission)
                     }
                 }
-                effects.append(contentsOf: reconcileHintShortcut())
             }
             return effects
         case let .failed(snapshot):
@@ -871,7 +872,10 @@ final class SwitcherEngine {
             presentationState.shortcutSettings.error = error
             return []
         }
-        if presentationState.generalSettings.displayed.hintMode.validationError(against: pair) != nil {
+        let general = presentationState.generalSettings
+        if [general.current, general.displayed].contains(where: {
+            $0.hintMode.validationError(against: pair) != nil
+        }) {
             presentationState.shortcutSettings.pending = nil
             presentationState.shortcutSettings.error = .conflictsWithHintShortcut(mode)
             return []
@@ -906,8 +910,9 @@ final class SwitcherEngine {
             presentationState.generalSettings.error = "List presentation must show between six and eight rows."
             return []
         }
-        let shortcuts = presentationState.shortcutSettings.pending ?? presentationState.shortcutSettings.current
-        if let error = settings.hintMode.validationError(against: shortcuts) {
+        let shortcuts = presentationState.shortcutSettings
+        if let error = [shortcuts.current, shortcuts.pending].compactMap({ $0 }).lazy
+            .compactMap({ settings.hintMode.validationError(against: $0) }).first {
             presentationState.generalSettings.hintShortcutError = error
             return []
         }
@@ -976,11 +981,11 @@ final class SwitcherEngine {
         )
         guard shouldEnable != exceptionShortcutsEnabled else { return [] }
         exceptionShortcutsEnabled = shouldEnable
-        var effects: [SwitcherEffect] = []
+        var effects = reconcileHintShortcut()
         if presentationState.isReady, let shouldEnable {
             effects.append(.setShortcutsEnabled(shouldEnable))
         }
-        return effects + reconcileHintShortcut()
+        return effects
     }
 
     private func reconcileHintShortcut() -> [SwitcherEffect] {

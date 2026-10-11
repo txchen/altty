@@ -83,6 +83,16 @@ struct GeneralSettings: Codable, Equatable, Sendable {
     }
 
     var isValid: Bool { listPresentation.isValid }
+
+    func replacingHintShortcut(_ shortcut: ShortcutBinding?) -> GeneralSettings {
+        GeneralSettings(
+            launchAtLogin: launchAtLogin,
+            listPresentation: listPresentation,
+            reverseMouseWheel: reverseMouseWheel,
+            diagnosticLoggingEnabled: diagnosticLoggingEnabled,
+            hintMode: HintModeSettings(enabled: hintMode.enabled, shortcut: shortcut)
+        )
+    }
 }
 
 struct SettingsSnapshot: Codable, Equatable, Sendable {
