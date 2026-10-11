@@ -5,11 +5,11 @@
 - [x] 1. `how` over affected subsystems (subagent report, summarized below)
 - [x] 2. architect: reduced. One sketch (this file + scaffold commit) instead of an arena. Reason: Shortcat/Neru precedent and the grounding report fix the shape; the one structural fork (engine-owned session vs separate controller) is decided below with rationale.
 - [x] 3. Throughput checkpoint (below)
-- [ ] 4. Delegate W1 (Hints runtime) and W2 (settings/engine/UI/hotkey) in separate worktrees; review diffs
-- [ ] 5. Merge, wire production, full test run, app build
+- [x] 4. Delegate W1 (Hints runtime) and W2 (settings/engine/UI/hotkey) in separate worktrees; review diffs
+- [x] 5. Merge, wire production, full test run, app build
 - [ ] 6. Real-surface verification (blocked while the screen is locked; smoke harness prepared)
-- [ ] 7. interrogate: only if design is contested
-- [ ] 8. Opening a PR: skip unless asked; local commits on a branch
+- [x] 7. interrogate: skip, design not contested; each worker ran an independent read-only review on another model and fixed its findings
+- [x] 8. Opening a PR: skip, not requested; work is on local branch `hint-mode`
 
 ## Throughput checkpoint
 - Blocking first steps: scaffold commit with `HintModeSettings`, `HintShortcutAdapter`, `HintSessionController`. Both workers compile against it.
@@ -24,3 +24,8 @@
 - Hint shortcut: key + at least one of ⌃⌥⌘, Shift allowed, must not equal any switcher chord or its Shift-reverse chord. Separate Carbon handler signature so pair transactions are untouched.
 - Keys typed while the scan runs are buffered and replayed (Shortcat buffers Enter).
 - Screen locked during this run: AX returns application-role references for every window, hit-test fails. Docs/qa-fixtures.md recorded the same symptom; it may be the lock, not the OS. Real-surface checks wait for an unlocked session.
+
+## Results
+- Merge: clean. 255 tests pass (150 existing + 105 new). `scripts/build-app.sh` succeeds. Visual baselines re-recorded for General, Permissions and Shortcuts and reviewed.
+- Locked-screen smoke against Finder: 8 targets, all AXMenuBarItem, 0 window nodes visited, 81 ms. Menu bar AX works while locked; window AX does not. Supports the lock explanation.
+- Still unverified on the real surface: overlay, key capture, clicks, Electron/Chromium priming, menu tracking, secure input.

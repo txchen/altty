@@ -142,11 +142,47 @@ per-device identification; third-party drivers and unusual gesture settings
 still need hardware validation. License and attribution ship in the app's
 `Contents/Resources/ThirdParty/ScrollReverser` directory.
 
+## Keyboard hints
+
+Hint Mode labels clickable elements so they can be clicked from the keyboard.
+It is off by default. Turn on **Enable keyboard hints** in Settings → General,
+then record a shortcut for **Show hints** in Settings → Shortcuts. No shortcut
+is registered until both are set. Hint Mode needs only Accessibility.
+
+Press the shortcut to label the frontmost window, its sheets and popovers and
+its menu bar items. With a menu open, only that menu is labelled. Type a label
+to select an element, then:
+
+| Key | Action |
+|---|---|
+| Return | Default action (press buttons and menu items, otherwise click) |
+| Return twice | Double click |
+| ⌃ Return | Right click |
+| ⌘ / ⇧ / ⌥ Return | Click with those modifiers |
+| Tap ⌃ | Move the pointer onto the element |
+| Escape, the shortcut again | Cancel |
+
+Typing another label moves the selection; Delete removes a typed letter, then
+the selection. The pointer is not moved back after a click.
+
+Electron apps get `AXManualAccessibility` and Chromium browsers get a temporary
+`AXEnhancedUserInterface` the first time they are hinted, because both build
+their web-content tree only for assistive tools. Test those apps with a freshly
+launched process: tools such as Shortcat leave the attribute set.
+
+Scan a running app with the production scanner without showing any UI:
+
+```sh
+ALTTY_RUN_HINT_SCAN_SMOKE=1 ALTTY_HINT_SCAN_PID=<pid> \
+scripts/test.sh --filter HintScanSmoke
+```
+
 ## Current foundation
 
 - Menu bar app
 - Settings window
 - Optional mouse-only scroll reversal with trackpad gesture discrimination
+- Optional keyboard hints for clicking elements of the frontmost window
 - Fail-closed readiness and recovery for Accessibility and SkyLight capability
 - Event-driven, generation-safe Active Space window inventory with lazy AX enrichment
 - Atomic configurable All-Windows and Current-App shortcut recorders with versioned local persistence

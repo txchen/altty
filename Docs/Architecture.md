@@ -80,6 +80,32 @@ Altty is intentionally small: it is a menu bar AppKit app with a title-list swit
   event, classifier, engine, migration and presentation tests do not capture live
   input; physical mouse/trackpad validation remains a separate manual check.
 
+## Hint Mode
+
+- `GeneralSettings.hintMode` holds `enabled` and an optional Hint Shortcut. It
+  decodes with a disabled default, so settings files keep schema five. A Hint
+  Shortcut needs a key and ⌃, ⌥ or ⌘ (Shift allowed) and must differ from both
+  switcher chords and their Shift-reverse chords. The engine rejects a
+  collision from either recorder.
+- The engine emits only the desired registration, `.setHintShortcut(binding?)`,
+  when it changes: enabled, bound, Accessibility available and an Exception
+  verdict that is not Ignore. SkyLight readiness does not gate it. While
+  inventory is not observed, workspace activation refreshes the frontmost
+  bundle for that verdict.
+- `CarbonHintShortcutAdapter` registers the one chord under its own Carbon
+  signature, so the switcher pair transaction and gesture history never see it.
+- `SystemHintSessionController` owns Hint Sessions outside the engine. A press
+  starts an active session event tap on the main run loop, then
+  `AXHintScanner` walks the Hint Scope on its own serial queue under one 1.5 s
+  deadline (≤0.2 s per AX call). Keys typed meanwhile are replayed into the pure
+  `HintSession` state machine, which decides swallowing, redraws, actions and
+  the double-click window. Session tokens discard late scans and timers.
+- `PanelHintOverlay` draws one click-through, non-activating panel per screen
+  with one layer per badge. `SystemHintActionPerformer` runs AX actions and
+  posts marked CGEvents on a serial queue; the tap ignores marked events.
+- Electron and Chromium priming lives in `HintAppPrimer`. Secure Input refuses
+  a session because the tap would not see Escape.
+
 ## Persisted Shortcut Settings
 
 - `ShortcutPair` contains exactly one base binding per switcher mode. Validation requires a main key and Option, Control or Command, reserves Shift for reverse navigation and rejects duplicate mode bindings.

@@ -31,3 +31,33 @@ A bundle-identifier rule modeled after AltTab. Its Hide behavior controls whethe
 ## Switcher Session
 
 One interaction beginning when a switcher shortcut is invoked and ending when a selection is confirmed or the interaction is cancelled. Its mode, invoking application and ordered candidate set remain stable for the session, except that invalidated windows are removed.
+
+## Hint Mode
+
+An optional, off-by-default keyboard alternative to clicking. It is enabled in
+Settings → General and needs a user-recorded Hint Shortcut. It depends on
+Accessibility only, independent of SkyLight and Switcher Sessions. Exception
+Rule Ignore behavior also unregisters the Hint Shortcut.
+
+## Hint Session
+
+One interaction beginning when the Hint Shortcut is pressed and ending when an
+action is performed or the interaction is cancelled. Its Hint Targets are
+captured once by a single scan; keys typed during the scan are replayed.
+
+## Hint Target
+
+A clickable Accessibility element in the Hint Scope: the frontmost
+application's focused window, its sheets and popovers, its top-level menu bar
+items, or an open menu instead of all of these. Each has one Hint Label.
+
+## Hint Label
+
+The short home-row string shown on a Hint Target. Labels are prefix-free and
+assigned in reading order. Typing a complete label selects its target; Return
+then performs the Default Action, and modifiers choose other clicks.
+
+## Default Action
+
+AXPress for buttons, menu items and menu bar items, AXRaise for windows, and a
+synthesized left click at the midpoint for everything else.

@@ -76,9 +76,9 @@ afterwards. Only applications the user actually hints are touched.
 - Readiness depends on Accessibility only, independent of SkyLight, like Mouse
   Wheel Reversal.
 - Exception Rule Ignore behavior also disables the Hint Shortcut.
-- The Hint Shortcut is persisted next to the switcher pair (settings schema
-  bump) and validated against both switcher chords and their Shift-reverse
-  variants.
+- The Hint Shortcut is validated against both switcher chords and their
+  Shift-reverse variants, in both directions: recording either side rejects a
+  collision.
 
 ## To settle by prototype before building
 
