@@ -45,7 +45,7 @@ struct AppEnvironment {
             input: SystemInputAdapter(shortcuts: settings.snapshot.shortcuts),
             mouseScroll: SystemMouseScrollAdapter(),
             hintShortcut: CarbonHintShortcutAdapter(),
-            hints: PendingHintSessionController(),
+            hints: SystemHintSessionController(),
             windowServer: SystemWindowServerAdapter(),
             accessibility: SystemAccessibilityAdapter(),
             workspace: workspace,
@@ -58,11 +58,4 @@ struct AppEnvironment {
             diagnostics: UnifiedLogDiagnosticsAdapter()
         )
     }
-}
-
-@MainActor
-final class PendingHintSessionController: HintSessionController {
-    func setShortcut(_ binding: ShortcutBinding?) {}
-    func toggleSession() {}
-    func endSession() {}
 }

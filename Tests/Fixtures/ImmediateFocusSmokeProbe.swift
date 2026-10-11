@@ -321,7 +321,7 @@ private enum ImmediateFocusSmokeProbe {
             input: input,
             mouseScroll: SystemMouseScrollAdapter(),
             hintShortcut: CarbonHintShortcutAdapter(),
-            hints: PendingHintSessionController(),
+            hints: SystemHintSessionController(),
             windowServer: windowServer,
             accessibility: accessibility,
             workspace: workspace,
