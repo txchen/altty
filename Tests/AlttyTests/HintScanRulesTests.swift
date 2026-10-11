@@ -108,6 +108,17 @@ struct HintScanRulesTests {
         #expect(!tree.childReads.contains(checkbox))
     }
 
+    @Test func popoversAndMenusEscapeTheWindowClip() {
+        let tree = FakeTree()
+        let window = tree.node(HintNodeInfo(role: "AXWindow", frame: rect(0, 0, 100, 100)))
+        let button = tree.node(HintNodeInfo(role: "AXButton", frame: rect(80, 80)), under: window)
+        let popover = tree.node(HintNodeInfo(role: "AXPopover", frame: rect(60, 100, 200, 200)), under: button)
+        tree.node(HintNodeInfo(role: "AXCheckBox", frame: rect(150, 150)), under: popover)
+
+        let walk = tree.walk(window, clip: rect(0, 0, 100, 100))
+        #expect(walk.candidates.map(\.frame) == [rect(80, 80, 20, 20), rect(150, 150)])
+    }
+
     @Test func menuItemsAreEnteredOnlyWhileTheirMenuIsOpen() {
         let tree = FakeTree()
         let menu = tree.node(HintNodeInfo(role: "AXMenu", frame: rect(0, 0, 200, 200)))

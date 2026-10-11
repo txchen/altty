@@ -71,6 +71,8 @@ enum HintScanRules {
     private static let importantContainerRoles: Set<String> = [
         "AXPopover", "AXSheet", "AXMenu", "AXList", "AXLink", "AXButton",
     ]
+    /// Drawn in their own surface, so they can extend past the window.
+    private static let detachedRoles: Set<String> = ["AXPopover", "AXSheet", "AXMenu"]
 
     static func isClickable(_ info: HintNodeInfo) -> Bool {
         guard info.enabled != false else { return false }
@@ -99,6 +101,10 @@ enum HintScanRules {
         guard let frame, hasArea(frame) else { return nil }
         let visible = frame.intersection(clip)
         return hasArea(visible) ? visible : nil
+    }
+
+    static func clip(for info: HintNodeInfo, enclosing clip: CGRect) -> CGRect {
+        detachedRoles.contains(info.role) ? .infinite : clip
     }
 
     static func childClip(for info: HintNodeInfo, clip: CGRect) -> CGRect {
@@ -181,8 +187,9 @@ struct HintTreeWalk<Reader: HintTreeReading> {
         return reader.info(of: element)
     }
 
-    private mutating func visit(_ element: Reader.Element, info: HintNodeInfo, clip: CGRect, depth: Int) {
+    private mutating func visit(_ element: Reader.Element, info: HintNodeInfo, clip enclosing: CGRect, depth: Int) {
         guard info.hidden != true else { return }
+        let clip = HintScanRules.clip(for: info, enclosing: enclosing)
         if info.role == "AXWebArea" { sawWebArea = true }
         guard !HintScanRules.isOutside(info.frame, clip: clip) else { return }
         if HintScanRules.isClickable(info), let frame = HintScanRules.visibleFrame(info.frame, clip: clip) {
