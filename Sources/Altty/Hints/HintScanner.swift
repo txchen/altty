@@ -189,7 +189,7 @@ final class HintScanBudget: @unchecked Sendable {
     }
 }
 
-struct AXHintTreeReader: HintTreeReading, @unchecked Sendable {
+struct AXHintTreeReader: HintTreeReading {
     private static let nodeAttributes = [
         kAXRoleAttribute, kAXSubroleAttribute, kAXPositionAttribute, kAXSizeAttribute,
         kAXEnabledAttribute, kAXHiddenAttribute, kAXSelectedAttribute,

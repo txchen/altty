@@ -20,7 +20,8 @@ protocol HintKeyboardTap: AnyObject {
 }
 
 /// An active session tap on the main run loop. The key-up of every swallowed
-/// key-down is swallowed too; events Altty posted itself pass untouched.
+/// key-down is swallowed too, as are key repeats; events Altty posted itself
+/// pass untouched.
 @MainActor
 final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
     private static let keyEvents: [CGEventType] = [.keyDown, .keyUp, .flagsChanged]
@@ -105,6 +106,9 @@ final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
             guard swallowedKeyCodes.remove(keyCode) == nil else { return true }
             return onEvent(.key(Self.raw(.keyUp, event)))
         case .keyDown:
+            // A held key never acts twice: a repeated Return would turn one
+            // click into a double click, a held Hint Shortcut would end the session.
+            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return true }
             let swallow = onEvent(.key(Self.raw(.keyDown, event)))
             if swallow { swallowedKeyCodes.insert(Self.keyCode(event)) }
             return swallow
