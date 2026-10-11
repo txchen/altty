@@ -1,11 +1,15 @@
 import AppKit
+import Carbon.HIToolbox
 
 @MainActor
 protocol HintWorkspace: AnyObject {
     var frontmostPID: pid_t? { get }
     var doubleClickInterval: TimeInterval { get }
-    /// At most one observer; starting again replaces it.
-    func observeActivations(_ handler: @escaping @MainActor () -> Void)
+    /// Secure Event Input hides every key from event taps.
+    var isSecureInputEnabled: Bool { get }
+    /// At most one observer; starting again replaces it. The handler receives
+    /// the activated application's process identifier.
+    func observeActivations(_ handler: @escaping @MainActor (pid_t?) -> Void)
     func stopObservingActivations()
     func beep()
 }
@@ -22,15 +26,18 @@ final class SystemHintWorkspace: HintWorkspace {
 
     var frontmostPID: pid_t? { NSWorkspace.shared.frontmostApplication?.processIdentifier }
     var doubleClickInterval: TimeInterval { NSEvent.doubleClickInterval }
+    var isSecureInputEnabled: Bool { IsSecureEventInputEnabled() }
 
-    func observeActivations(_ handler: @escaping @MainActor () -> Void) {
+    func observeActivations(_ handler: @escaping @MainActor (pid_t?) -> Void) {
         stopObservingActivations()
         observer = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
             queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { handler() }
+        ) { notification in
+            let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let pid = application?.processIdentifier
+            MainActor.assumeIsolated { handler(pid) }
         }
     }
 

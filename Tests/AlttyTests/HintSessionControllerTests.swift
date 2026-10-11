@@ -82,15 +82,16 @@ private final class FakePerformer: HintActionPerformer {
 private final class FakeWorkspace: HintWorkspace {
     var frontmostPID: pid_t? = 42
     let doubleClickInterval: TimeInterval = 0.5
+    var isSecureInputEnabled = false
     var beeps = 0
-    private var activation: (@MainActor () -> Void)?
+    private var activation: (@MainActor (pid_t?) -> Void)?
 
     var isObserving: Bool { activation != nil }
 
-    func observeActivations(_ handler: @escaping @MainActor () -> Void) { activation = handler }
+    func observeActivations(_ handler: @escaping @MainActor (pid_t?) -> Void) { activation = handler }
     func stopObservingActivations() { activation = nil }
     func beep() { beeps += 1 }
-    func activateAnotherApplication() { activation?() }
+    func activate(_ pid: pid_t) { activation?(pid) }
 }
 
 @MainActor
@@ -193,6 +194,16 @@ struct HintSessionControllerTests {
         #expect(harness.workspace.beeps == 1)
     }
 
+    @Test func secureInputRefusesToStartBecauseTheTapWouldSeeNoKeys() {
+        let harness = Harness()
+        harness.workspace.isSecureInputEnabled = true
+        harness.controller.toggleSession()
+        #expect(!harness.controller.isActive)
+        #expect(!harness.tap.isRunning)
+        #expect(harness.scanner.requests.isEmpty)
+        #expect(harness.workspace.beeps == 1)
+    }
+
     @Test func keysTypedDuringTheScanAreReplayedInOrder() {
         let harness = Harness()
         harness.controller.toggleSession()
@@ -275,11 +286,13 @@ struct HintSessionControllerTests {
         #expect(harness.overlay.shown.isEmpty)
     }
 
-    @Test func aFrontmostApplicationChangeEndsTheSession() {
+    @Test func anotherApplicationActivatingEndsTheSessionButALateNoticeForTheHintedOneDoesNot() {
         let harness = Harness()
         harness.controller.toggleSession()
         harness.scanner.finish(0, with: Harness.targets(2))
-        harness.workspace.activateAnotherApplication()
+        harness.workspace.activate(42)
+        #expect(harness.controller.isActive)
+        harness.workspace.activate(7)
         #expect(!harness.controller.isActive)
         #expect(!harness.tap.isRunning)
         #expect(harness.overlay.hides > 0)

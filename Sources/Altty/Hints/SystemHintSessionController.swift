@@ -77,12 +77,16 @@ final class SystemHintSessionController: HintSessionController {
             onEvent: { [weak self] event in self?.receive(event) ?? false },
             onFailure: { [weak self] in self?.endSession() }
         )
-        guard started, let pid = workspace.frontmostPID else {
+        guard started, !workspace.isSecureInputEnabled, let pid = workspace.frontmostPID else {
             endSession()
             workspace.beep()
             return
         }
-        workspace.observeActivations { [weak self] in self?.endSession() }
+        // The notice for the activation that made `pid` frontmost can still be
+        // queued when the shortcut is pressed right after an app switch.
+        workspace.observeActivations { [weak self] activated in
+            if activated != pid { self?.endSession() }
+        }
         scanner.scan(pid: pid) { [weak self] result in
             self?.scanFinished(result, session: session)
         }
