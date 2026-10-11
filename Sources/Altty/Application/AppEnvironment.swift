@@ -5,6 +5,8 @@ struct AppEnvironment {
     let engine: SwitcherEngine
     let input: any InputAdapter
     let mouseScroll: any MouseScrollAdapter
+    let hintShortcut: any HintShortcutAdapter
+    let hints: any HintSessionController
     let windowServer: any WindowServerAdapter
     let accessibility: any AccessibilityAdapter
     let workspace: any WorkspaceAdapter
@@ -28,7 +30,8 @@ struct AppEnvironment {
             launchAtLogin: launchAtLoginStatus == .enabled,
             listPresentation: settings.snapshot.general.listPresentation,
             reverseMouseWheel: settings.snapshot.general.reverseMouseWheel,
-            diagnosticLoggingEnabled: settings.snapshot.general.diagnosticLoggingEnabled
+            diagnosticLoggingEnabled: settings.snapshot.general.diagnosticLoggingEnabled,
+            hintMode: settings.snapshot.general.hintMode
         )
         return AppEnvironment(
             engine: SwitcherEngine(
@@ -41,6 +44,8 @@ struct AppEnvironment {
             ),
             input: SystemInputAdapter(shortcuts: settings.snapshot.shortcuts),
             mouseScroll: SystemMouseScrollAdapter(),
+            hintShortcut: CarbonHintShortcutAdapter(),
+            hints: PendingHintSessionController(),
             windowServer: SystemWindowServerAdapter(),
             accessibility: SystemAccessibilityAdapter(),
             workspace: workspace,
@@ -53,4 +58,11 @@ struct AppEnvironment {
             diagnostics: UnifiedLogDiagnosticsAdapter()
         )
     }
+}
+
+@MainActor
+final class PendingHintSessionController: HintSessionController {
+    func setShortcut(_ binding: ShortcutBinding?) {}
+    func toggleSession() {}
+    func endSession() {}
 }

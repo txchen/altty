@@ -125,7 +125,7 @@ struct MouseScrollTests {
         _ = engine.send(.launch)
         _ = engine.receive(.accessibilityChanged(.available))
         _ = engine.receive(.windowServerChanged(.unavailable))
-        let settings = GeneralSettings(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true)
+        let settings = GeneralSettings(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true, hintMode: .disabled)
         let snapshot = SettingsSnapshot(shortcuts: .defaults, general: settings)
         #expect(engine.send(.replaceGeneralSettings(settings)) == [.persistSettings(snapshot)])
         #expect(engine.receiveSettingsPersistence(.saved(snapshot)) == [.setMouseScrollReversalEnabled(true), .requestMouseScrollPermission])
@@ -141,7 +141,7 @@ struct MouseScrollTests {
     }
 
     @Test func saveFailurePreservesOldScrollSettingAndLoginReconciliationDoesNotResetIt() {
-        let settings = GeneralSettings(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true)
+        let settings = GeneralSettings(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true, hintMode: .disabled)
         let engine = SwitcherEngine()
         _ = engine.send(.replaceGeneralSettings(settings))
         #expect(engine.receiveSettingsPersistence(.failed(.init(shortcuts: .defaults, general: settings))) == [])
@@ -150,7 +150,7 @@ struct MouseScrollTests {
         _ = restored.send(.launch)
         #expect(restored.receive(.accessibilityChanged(.available)).contains(.setMouseScrollReversalEnabled(true)))
         let effects = restored.receiveLaunchAtLoginStatus(.enabled)
-        let expected = GeneralSettings(launchAtLogin: true, listPresentation: .defaults, reverseMouseWheel: true)
+        let expected = GeneralSettings(launchAtLogin: true, listPresentation: .defaults, reverseMouseWheel: true, hintMode: .disabled)
         #expect(effects == [.persistSettings(.init(shortcuts: .defaults, general: expected))])
     }
 
@@ -161,7 +161,7 @@ struct MouseScrollTests {
         let url = directory.appendingPathComponent("settings.json")
         let persistence = FileSettingsPersistenceAdapter(settingsURL: url)
         let general = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(size: .medium), reverseMouseWheel: true)
+            listPresentation: .init(size: .medium), reverseMouseWheel: true, hintMode: .disabled)
         let snapshot = SettingsSnapshot(shortcuts: .defaults, general: general)
         try persistence.saveSettings(snapshot)
         #expect(persistence.loadSettings() == .init(snapshot: snapshot, warning: nil))

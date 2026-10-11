@@ -69,7 +69,8 @@ final class MenuBarController: NSObject {
             launchAtLogin: generalSettings.launchAtLogin,
             listPresentation: generalSettings.listPresentation,
             reverseMouseWheel: !generalSettings.reverseMouseWheel,
-            diagnosticLoggingEnabled: generalSettings.diagnosticLoggingEnabled)))
+            diagnosticLoggingEnabled: generalSettings.diagnosticLoggingEnabled,
+            hintMode: generalSettings.hintMode)))
     }
     @objc private func openSettings() { onCommand(.openSettings) }
     @objc private func requestAccessibility() { onCommand(.requestAccessibility) }

@@ -59,7 +59,7 @@ import AppKit
                     try await capture(view, appearance: appearance, name: "\(name)-\(theme)", output: output)
                 }
                 var permissionState = state
-                permissionState.generalSettings.current = .init(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true)
+                permissionState.generalSettings.current = .init(launchAtLogin: false, listPresentation: .defaults, reverseMouseWheel: true, hintMode: .disabled)
                 permissionState.generalSettings.mouseScrollStatus = .inputMonitoringRequired
                 settings.update(state: permissionState)
                 sidebar.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)

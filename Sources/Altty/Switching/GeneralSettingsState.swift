@@ -5,6 +5,8 @@ struct GeneralSettingsState: Equatable, Sendable {
     var recoveryWarning: String?
     var launchAtLoginRequiresApproval = false
     var mouseScrollStatus: MouseScrollStatus = .disabled
+    var hintShortcutError: HintShortcutError?
+    var hintShortcutUnavailable = false
 
     var displayed: GeneralSettings { pending ?? current }
     var inlineMessage: String? { error ?? recoveryWarning }
@@ -21,5 +23,21 @@ struct GeneralSettingsState: Equatable, Sendable {
             return "Mouse wheel reversal could not start. Check Accessibility and Input Monitoring permissions, then click Check Readiness."
         }
         return nil
+    }
+
+    func hintModeMessage(accessibility: Availability) -> String? {
+        guard current.hintMode.enabled else { return nil }
+        if current.hintMode.shortcut == nil {
+            return "Record a Hint shortcut in Shortcuts to start using hints."
+        }
+        if accessibility != .available { return "Keyboard hints need Accessibility permission." }
+        return hintShortcutUnavailable ? HintShortcutError.unavailable.message : nil
+    }
+
+    var hintShortcutMessage: String? {
+        if let hintShortcutError { return hintShortcutError.message }
+        if hintShortcutUnavailable { return HintShortcutError.unavailable.message }
+        guard current.hintMode.shortcut != nil, !current.hintMode.enabled else { return nil }
+        return "Turn on keyboard hints in General to use this shortcut."
     }
 }

@@ -37,7 +37,7 @@ struct AdaptiveListTests {
         let persistence = FileSettingsPersistenceAdapter(settingsURL: url)
         let original = SettingsSnapshot(shortcuts: .defaults, exceptionRules: [], general:
             .init(launchAtLogin: true, listPresentation: .defaults,
-                  reverseMouseWheel: true, diagnosticLoggingEnabled: true))
+                  reverseMouseWheel: true, diagnosticLoggingEnabled: true, hintMode: .disabled))
         try persistence.saveSettings(original)
         var json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         var general = try #require(json["general"] as? [String: Any])

@@ -50,6 +50,11 @@ struct SettingsWindowObservedState: Equatable {
     let mouseScrollControlTitle: String
     let mouseScrollMessage: String?
     let showsInputMonitoringRecovery: Bool
+    let hintModeControlTitle: String
+    let hintModeMessage: String?
+    let hintShortcutTitle: String
+    let hintShortcutMessage: String?
+    let canClearHintShortcut: Bool
 }
 
 @MainActor
@@ -59,7 +64,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let symbol: String
         let detail: String
 
-        static let general = Pane(title: "General", symbol: "gearshape", detail: "Startup, window appearance, and mouse scrolling.")
+        static let general = Pane(title: "General", symbol: "gearshape", detail: "Startup, window appearance, mouse scrolling, and keyboard hints.")
         static let shortcuts = Pane(title: "Shortcuts", symbol: "keyboard", detail: "Hold your shortcut to choose a window. Press Shift to go back; release to switch.")
         static let exceptions = Pane(title: "Exceptions", symbol: "list.bullet.rectangle", detail: "Choose which apps appear in the switcher and where shortcuts stay with the app.")
         static let about = Pane(title: "About", symbol: "info.circle", detail: "A lightweight window switcher for Mac.")
@@ -82,6 +87,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         action: #selector(generalControlsChanged)
     )
     private let mouseScrollMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private lazy var hintModeCheckbox = NSButton(
+        checkboxWithTitle: "Enable keyboard hints",
+        target: self,
+        action: #selector(generalControlsChanged)
+    )
+    private let hintModeMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private let hintShortcutMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private lazy var clearHintShortcutButton = NSButton(
+        title: "Clear",
+        target: self,
+        action: #selector(clearHintShortcut)
+    )
     private lazy var diagnosticLoggingCheckbox = NSButton(
         checkboxWithTitle: "Enable diagnostic logging",
         target: self,
@@ -122,16 +139,22 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         self?.onCommand(.replaceExceptionRules(rules))
     }
     private lazy var allWindowsRecorder = ShortcutRecorderControl(
-        mode: .allWindows,
+        name: SwitcherMode.allWindows.title,
         binding: ShortcutPair.defaults.allWindows
-    ) { [weak self] mode, binding in
-        self?.onCommand(.updateShortcut(mode, binding))
+    ) { [weak self] binding in
+        self?.onCommand(.updateShortcut(.allWindows, binding))
     }
     private lazy var currentAppRecorder = ShortcutRecorderControl(
-        mode: .currentApp,
+        name: SwitcherMode.currentApp.title,
         binding: ShortcutPair.defaults.currentApp
-    ) { [weak self] mode, binding in
-        self?.onCommand(.updateShortcut(mode, binding))
+    ) { [weak self] binding in
+        self?.onCommand(.updateShortcut(.currentApp, binding))
+    }
+    private lazy var hintShortcutRecorder = ShortcutRecorderControl(
+        name: "Hint",
+        binding: nil
+    ) { [weak self] binding in
+        self?.onCommand(.updateHintShortcut(binding))
     }
 
     init(
@@ -163,6 +186,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         inputMonitoringButton.setAccessibilityLabel("Allow Altty Input Monitoring")
         inputMonitoringButton.isHidden = true
         mouseScrollMessageLabel.isHidden = true
+        hintModeCheckbox.setAccessibilityLabel("Enable keyboard hints")
+        hintModeMessageLabel.isHidden = true
+        hintShortcutMessageLabel.isHidden = true
+        clearHintShortcutButton.setAccessibilityLabel("Clear Hint shortcut")
         sizePopUp.setAccessibilityLabel("Switcher list size")
         openLoginItemsButton.setAccessibilityLabel("Open Login Items Settings")
         configureSidebar(on: window)
@@ -184,7 +211,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             showsLoginItemsRecovery: !openLoginItemsButton.isHidden,
             mouseScrollControlTitle: mouseScrollCheckbox.title,
             mouseScrollMessage: mouseScrollMessageLabel.isHidden ? nil : mouseScrollMessageLabel.stringValue,
-            showsInputMonitoringRecovery: !inputMonitoringButton.isHidden
+            showsInputMonitoringRecovery: !inputMonitoringButton.isHidden,
+            hintModeControlTitle: hintModeCheckbox.title,
+            hintModeMessage: hintModeMessageLabel.isHidden ? nil : hintModeMessageLabel.stringValue,
+            hintShortcutTitle: hintShortcutRecorder.title,
+            hintShortcutMessage: hintShortcutMessageLabel.isHidden ? nil : hintShortcutMessageLabel.stringValue,
+            canClearHintShortcut: clearHintShortcutButton.isEnabled
         )
     }
 
@@ -207,6 +239,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         inputMonitoringButton.isHidden = !state.generalSettings.current.reverseMouseWheel
             || state.generalSettings.mouseScrollStatus != .inputMonitoringRequired
         mousePermissionActions.isHidden = inputMonitoringButton.isHidden
+        let hintMessage = state.generalSettings.hintModeMessage(accessibility: state.accessibility)
+        hintModeMessageLabel.stringValue = hintMessage ?? ""
+        hintModeMessageLabel.isHidden = hintMessage == nil
         updateShortcuts(state.shortcutSettings)
         exceptionsController.update(state.exceptionSettings)
     }
@@ -294,6 +329,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             mouseScrollMessageLabel.font = .systemFont(ofSize: 12)
             stack.addArrangedSubview(card("Mouse", views: [mouseScrollCheckbox, mouseDetail,
                 mouseScrollMessageLabel, mousePermissionActions]))
+            let hintDetail = NSTextField(wrappingLabelWithString: "Press the Hint shortcut to label clickable elements in the frontmost window. Type a label to select it, then press Return to click.")
+            hintDetail.font = .systemFont(ofSize: 12)
+            hintDetail.textColor = .secondaryLabelColor
+            hintModeMessageLabel.textColor = .secondaryLabelColor
+            hintModeMessageLabel.font = .systemFont(ofSize: 12)
+            stack.addArrangedSubview(card("Hints", views: [hintModeCheckbox, hintDetail, hintModeMessageLabel]))
             statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
             accessibilityDetailLabel.font = .systemFont(ofSize: 12)
             accessibilityDetailLabel.textColor = .secondaryLabelColor
@@ -318,6 +359,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             shortcutErrorLabel.font = .systemFont(ofSize: 12)
             stack.addArrangedSubview(shortcutPendingLabel)
             stack.addArrangedSubview(shortcutErrorLabel)
+            hintShortcutMessageLabel.font = .systemFont(ofSize: 12)
+            stack.addArrangedSubview(card("Hints", views: [
+                shortcutRow(title: "Show hints", recorder: hintShortcutRecorder, defaultBinding: nil,
+                            accessory: clearHintShortcutButton),
+                hintShortcutMessageLabel,
+            ]))
         } else if pane == .exceptions {
             stack.addArrangedSubview(exceptionsController.view)
         } else if pane == .about {
@@ -387,6 +434,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     @objc private func openProject() { performAboutAction(.project) }
     @objc private func openSupport() { performAboutAction(.support) }
     @objc private func openLoginItemsSettings() { onCommand(.openLoginItemsSettings) }
+    @objc private func clearHintShortcut() { onCommand(.updateHintShortcut(nil)) }
 
     func advanceKeyboardFocus() {
         if window?.firstResponder === sidebar {
@@ -409,6 +457,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     func toggleMouseScrollReversal() { mouseScrollCheckbox.performClick(nil) }
     func toggleDiagnosticLogging() { diagnosticLoggingCheckbox.performClick(nil) }
+    func toggleHintMode() { hintModeCheckbox.performClick(nil) }
+    func clearHintShortcutBinding() { clearHintShortcutButton.performClick(nil) }
+    func recordHintShortcut(with event: NSEvent) {
+        hintShortcutRecorder.performClick(nil)
+        hintShortcutRecorder.keyDown(with: event)
+    }
 
     @objc private func generalControlsChanged() {
         guard ListSize.allCases.indices.contains(sizePopUp.indexOfSelectedItem) else {
@@ -420,7 +474,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                 size: ListSize.allCases[sizePopUp.indexOfSelectedItem]
             ),
             reverseMouseWheel: mouseScrollCheckbox.state == .on,
-            diagnosticLoggingEnabled: diagnosticLoggingCheckbox.state == .on
+            diagnosticLoggingEnabled: diagnosticLoggingCheckbox.state == .on,
+            hintMode: HintModeSettings(
+                enabled: hintModeCheckbox.state == .on,
+                shortcut: displayedGeneralSettings.hintMode.shortcut
+            )
         ))
     }
 
@@ -430,6 +488,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         launchAtLoginCheckbox.state = state.displayed.launchAtLogin ? .on : .off
         mouseScrollCheckbox.state = state.displayed.reverseMouseWheel ? .on : .off
         diagnosticLoggingCheckbox.state = state.displayed.diagnosticLoggingEnabled ? .on : .off
+        hintModeCheckbox.state = state.displayed.hintMode.enabled ? .on : .off
+        hintShortcutRecorder.setBinding(state.displayed.hintMode.shortcut)
+        clearHintShortcutButton.isEnabled = state.displayed.hintMode.shortcut != nil
+        hintShortcutMessageLabel.stringValue = state.hintShortcutMessage ?? ""
+        hintShortcutMessageLabel.isHidden = state.hintShortcutMessage == nil
+        hintShortcutMessageLabel.textColor = state.hintShortcutError != nil || state.hintShortcutUnavailable
+            ? .systemRed
+            : .secondaryLabelColor
         sizePopUp.selectItem(at: ListSize.allCases.firstIndex(
             of: state.displayed.listPresentation.size
         ) ?? 0)
@@ -445,7 +511,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         launchAtLoginCheckbox.nextKeyView = mouseScrollCheckbox
         mouseScrollCheckbox.nextKeyView = inputMonitoringButton
         inputMonitoringButton.nextKeyView = revealApplicationButton
-        revealApplicationButton.nextKeyView = sizePopUp
+        revealApplicationButton.nextKeyView = hintModeCheckbox
+        hintModeCheckbox.nextKeyView = sizePopUp
         sizePopUp.nextKeyView = openLoginItemsButton
         openLoginItemsButton.nextKeyView = diagnosticLoggingCheckbox
         diagnosticLoggingCheckbox.nextKeyView = sidebar
@@ -507,20 +574,24 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     private func shortcutRow(
         title: String,
         recorder: ShortcutRecorderControl,
-        defaultBinding: ShortcutBinding
+        defaultBinding: ShortcutBinding?,
+        accessory: NSView? = nil
     ) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        let defaultLabel = NSTextField(
-            labelWithString: "Default: \(defaultBinding.displayName)"
-        )
-        defaultLabel.textColor = .secondaryLabelColor
-        defaultLabel.font = .systemFont(ofSize: 11)
-        let labels = NSStackView(views: [titleLabel, defaultLabel])
+        let labels = NSStackView(views: [titleLabel])
+        if let defaultBinding {
+            let defaultLabel = NSTextField(
+                labelWithString: "Default: \(defaultBinding.displayName)"
+            )
+            defaultLabel.textColor = .secondaryLabelColor
+            defaultLabel.font = .systemFont(ofSize: 11)
+            labels.addArrangedSubview(defaultLabel)
+        }
         labels.orientation = .vertical
         labels.alignment = .leading
         labels.spacing = 2
-        let row = NSStackView(views: [labels, NSView(), recorder])
+        let row = NSStackView(views: [labels, NSView(), recorder] + [accessory].compactMap { $0 })
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 20
@@ -548,36 +619,36 @@ private final class SettingsFocusableButton: NSButton {
 
 @MainActor
 final class ShortcutRecorderControl: NSButton {
-    private let mode: SwitcherMode
-    private let onBinding: (SwitcherMode, ShortcutBinding) -> Void
-    private var binding: ShortcutBinding
+    private let name: String
+    private let onRecord: (ShortcutBinding) -> Void
+    private var binding: ShortcutBinding?
     private var isRecording = false
 
     init(
-        mode: SwitcherMode,
-        binding: ShortcutBinding,
-        onBinding: @escaping (SwitcherMode, ShortcutBinding) -> Void
+        name: String,
+        binding: ShortcutBinding?,
+        onRecord: @escaping (ShortcutBinding) -> Void
     ) {
-        self.mode = mode
+        self.name = name
         self.binding = binding
-        self.onBinding = onBinding
+        self.onRecord = onRecord
         super.init(frame: .zero)
         bezelStyle = .rounded
         target = self
         action = #selector(beginRecording)
         setBinding(binding)
-        toolTip = "Click, then type the new \(mode.title) shortcut"
+        toolTip = "Click, then type the new \(name) shortcut"
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override var acceptsFirstResponder: Bool { true }
 
-    func setBinding(_ binding: ShortcutBinding) {
+    func setBinding(_ binding: ShortcutBinding?) {
         self.binding = binding
         guard !isRecording else { return }
-        title = binding.displayName
-        setAccessibilityLabel("\(mode.title) shortcut, \(binding.displayName)")
+        title = binding?.displayName ?? "Record Shortcut"
+        setAccessibilityLabel("\(name) shortcut, \(title)")
     }
 
     @objc private func beginRecording() {
@@ -605,7 +676,7 @@ final class ShortcutRecorderControl: NSButton {
             modifiers: ShortcutModifiers(eventFlags: event.modifierFlags)
         )
         isRecording = false
-        onBinding(mode, proposed)
+        onRecord(proposed)
     }
 
     private static func keyDisplayName(_ event: NSEvent) -> String {

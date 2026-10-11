@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.run(self.environment.engine.receiveSession(event))
         }
         environment.input.install { [weak self] event in self?.receive(event) }
+        environment.hintShortcut.install { [weak self] in self?.environment.hints.toggleSession() }
         environment.mouseScroll.installStatusHandler { [weak self] status in
             guard let self else { return }
             self.environment.engine.receiveMouseScrollStatus(status)
@@ -48,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didWakeNotification,
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceDidActivateApplication),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
         handle(.launch)
     }
 
@@ -58,6 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switcherPanelTask?.cancel()
         environment.presentation.dismissSwitcherPanel()
         environment.input.setShortcutsEnabled(false)
+        _ = environment.hintShortcut.setShortcut(nil)
+        environment.hints.setShortcut(nil)
         environment.mouseScroll.setEnabled(false)
         stopInventoryObservation()
         environment.accessibility.stopMonitoringAvailability()
@@ -81,9 +90,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func receive(_ event: SwitcherEvent) {
-        environment.engine.updateFrontmostApplication(
+        run(environment.engine.updateFrontmostApplication(
             environment.exceptions.frontmostApplicationBundleIdentifier()
-        )
+        ))
         run(environment.engine.receive(event))
         refreshPresentation()
     }
@@ -143,6 +152,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 receive(.windowServerChanged(environment.windowServer.availability()))
             case let .setShortcutsEnabled(enabled):
                 setShortcutsEnabled(enabled)
+            case let .setHintShortcut(binding):
+                let registered = environment.hintShortcut.setShortcut(binding)
+                environment.hints.setShortcut(registered ? binding : nil)
+                environment.engine.receiveHintShortcutStatus(registered: registered || binding == nil)
+                refreshPresentation()
             case let .setMouseScrollReversalEnabled(enabled):
                 environment.engine.receiveMouseScrollStatus(environment.mouseScroll.setEnabled(enabled))
                 refreshPresentation()
@@ -180,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { [weak self] in
                     guard let self else { return }
                     self.run(await self.environment.engine.receiveInventory(.clear))
+                    self.refreshUnobservedFrontmostApplication()
                     self.inventoryGeneration = await self.environment.engine.inventorySnapshot().generation
                 }
             case let .deminimizeWindow(identity):
@@ -617,5 +632,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         environment.diagnostics.recordPerformance(.latency(metric, nanoseconds: nanoseconds))
     }
 
+    private func refreshUnobservedFrontmostApplication() {
+        guard environment.engine.presentationState.hasLaunched, !isMonitoringInventory else { return }
+        run(environment.engine.updateFrontmostApplication(
+            environment.exceptions.frontmostApplicationBundleIdentifier()
+        ))
+    }
+
     @objc private func systemDidWake() { handle(.systemDidWake) }
+    @objc private func workspaceDidActivateApplication() {
+        refreshUnobservedFrontmostApplication()
+        refreshPresentation()
+    }
 }

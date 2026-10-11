@@ -14,9 +14,9 @@ struct SettingsPresentationTests {
         defer { controller.close() }
         var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .available)
         let original = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(size: .medium), reverseMouseWheel: true)
+            listPresentation: .init(size: .medium), reverseMouseWheel: true, hintMode: .disabled)
         let enabled = GeneralSettings(launchAtLogin: true, listPresentation: original.listPresentation,
-            reverseMouseWheel: true, diagnosticLoggingEnabled: true)
+            reverseMouseWheel: true, diagnosticLoggingEnabled: true, hintMode: .disabled)
         state.generalSettings.current = original
         controller.update(state: state)
         controller.toggleDiagnosticLogging()
@@ -35,13 +35,13 @@ struct SettingsPresentationTests {
         }
         var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .unavailable)
         state.generalSettings.current = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(size: .medium))
+            listPresentation: .init(size: .medium), hintMode: .disabled)
         controller.update(state: state)
         #expect(controller.observedState.mouseScrollControlTitle == "Reverse mouse wheel direction")
         #expect(controller.observedState.mouseScrollMessage == nil)
         controller.toggleMouseScrollReversal()
         let enabled = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(size: .medium), reverseMouseWheel: true)
+            listPresentation: .init(size: .medium), reverseMouseWheel: true, hintMode: .disabled)
         #expect(commands == [.replaceGeneralSettings(enabled)])
         state.generalSettings.current = enabled
         state.generalSettings.mouseScrollStatus = .inputMonitoringRequired
@@ -54,7 +54,7 @@ struct SettingsPresentationTests {
         #expect(controller.observedState.mouseScrollMessage == nil)
         controller.toggleMouseScrollReversal()
         #expect(commands.last == .replaceGeneralSettings(GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(size: .medium))))
+            listPresentation: .init(size: .medium), hintMode: .disabled)))
         controller.close()
     }
 
@@ -122,7 +122,8 @@ struct SettingsPresentationTests {
             launchAtLogin: true,
             listPresentation: ListPresentationPreferences(
                 size: .medium
-            )
+            ),
+            hintMode: .disabled
         )
         let snapshot = SettingsSnapshot(
             shortcuts: .defaults,
@@ -144,7 +145,8 @@ struct SettingsPresentationTests {
     @Test func launchAndPersistenceFailuresKeepPriorGeneralSettingsInline() {
         let proposed = GeneralSettings(
             launchAtLogin: true,
-            listPresentation: .defaults
+            listPresentation: .defaults,
+            hintMode: .disabled
         )
         let snapshot = SettingsSnapshot(shortcuts: .defaults, general: proposed)
         let launchFailureEngine = SwitcherEngine()
@@ -186,7 +188,8 @@ struct SettingsPresentationTests {
         let engine = SwitcherEngine()
         let proposed = GeneralSettings(
             launchAtLogin: true,
-            listPresentation: .defaults
+            listPresentation: .defaults,
+            hintMode: .disabled
         )
         _ = engine.send(.replaceGeneralSettings(proposed))
 
@@ -206,7 +209,8 @@ struct SettingsPresentationTests {
 
         let reconciled = GeneralSettings(
             launchAtLogin: true,
-            listPresentation: .defaults
+            listPresentation: .defaults,
+            hintMode: .disabled
         )
         #expect(engine.receiveLaunchAtLoginStatus(.enabled) == [
             .persistSettings(SettingsSnapshot(
@@ -327,7 +331,8 @@ struct SettingsPresentationTests {
             launchAtLogin: true,
             listPresentation: ListPresentationPreferences(
                 size: .medium
-            )
+            ),
+            hintMode: .disabled
         )
         controller.replaceGeneralSettings(proposed)
         controller.performAboutAction(.project)
@@ -368,12 +373,12 @@ struct SettingsPresentationTests {
         defer { menu.uninstall() }
         var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .available)
         let original = GeneralSettings(launchAtLogin: true,
-            listPresentation: .init(size: .medium), reverseMouseWheel: false)
+            listPresentation: .init(size: .medium), reverseMouseWheel: false, hintMode: .disabled)
         state.generalSettings.current = original
         menu.update(state: state)
         #expect(!menu.observedState.mouseScrollReversed)
         menu.toggleMouseScroll()
-        let enabled = GeneralSettings(launchAtLogin: true, listPresentation: original.listPresentation, reverseMouseWheel: true)
+        let enabled = GeneralSettings(launchAtLogin: true, listPresentation: original.listPresentation, reverseMouseWheel: true, hintMode: .disabled)
         #expect(commands == [.replaceGeneralSettings(enabled)])
         state.generalSettings.current = enabled
         menu.update(state: state)

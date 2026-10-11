@@ -23,7 +23,7 @@ struct SwitcherEngineTests {
     @Test func launchStartsUnavailableUntilBothDependenciesAreReady() {
         let engine = SwitcherEngine()
 
-        #expect(engine.send(.launch) == [.setShortcutsEnabled(false), .checkAccessibility, .checkWindowServer])
+        #expect(engine.send(.launch) == [.setShortcutsEnabled(false), .setHintShortcut(nil), .checkAccessibility, .checkWindowServer])
         #expect(engine.presentationState.readinessTitle == "Checking readiness…")
         #expect(engine.receive(.accessibilityChanged(.available)) == [.recordDiagnostic(.accessibilityAvailable)])
         #expect(engine.receive(.windowServerChanged(.available)) == [
