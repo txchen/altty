@@ -45,28 +45,32 @@ struct ListPresentationPreferences: Codable, Equatable, Sendable {
 struct GeneralSettings: Codable, Equatable, Sendable {
     static let defaults = GeneralSettings(
         launchAtLogin: false,
-        listPresentation: .defaults
+        listPresentation: .defaults,
+        hintMode: .disabled
     )
 
     let launchAtLogin: Bool
     let listPresentation: ListPresentationPreferences
     let reverseMouseWheel: Bool
     let diagnosticLoggingEnabled: Bool
+    let hintMode: HintModeSettings
 
     init(
         launchAtLogin: Bool,
         listPresentation: ListPresentationPreferences,
         reverseMouseWheel: Bool = false,
-        diagnosticLoggingEnabled: Bool = false
+        diagnosticLoggingEnabled: Bool = false,
+        hintMode: HintModeSettings
     ) {
         self.launchAtLogin = launchAtLogin
         self.listPresentation = listPresentation
         self.reverseMouseWheel = reverseMouseWheel
         self.diagnosticLoggingEnabled = diagnosticLoggingEnabled
+        self.hintMode = hintMode
     }
 
     private enum CodingKeys: String, CodingKey {
-        case launchAtLogin, listPresentation, reverseMouseWheel, diagnosticLoggingEnabled
+        case launchAtLogin, listPresentation, reverseMouseWheel, diagnosticLoggingEnabled, hintMode
     }
 
     init(from decoder: any Decoder) throws {
@@ -75,6 +79,7 @@ struct GeneralSettings: Codable, Equatable, Sendable {
         listPresentation = try values.decode(ListPresentationPreferences.self, forKey: .listPresentation)
         reverseMouseWheel = try values.decode(Bool.self, forKey: .reverseMouseWheel)
         diagnosticLoggingEnabled = try values.decodeIfPresent(Bool.self, forKey: .diagnosticLoggingEnabled) ?? false
+        hintMode = try values.decodeIfPresent(HintModeSettings.self, forKey: .hintMode) ?? .disabled
     }
 
     var isValid: Bool { listPresentation.isValid }
@@ -109,6 +114,7 @@ struct SettingsSnapshot: Codable, Equatable, Sendable {
         shortcuts.validationError == nil
             && Set(exceptionRules.map(\.identity)).count == exceptionRules.count
             && general.isValid
+            && general.hintMode.validationError(against: shortcuts) == nil
     }
 }
 

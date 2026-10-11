@@ -748,7 +748,8 @@ final class SwitcherEngine {
             launchAtLogin: isEnabled,
             listPresentation: displayed.listPresentation,
             reverseMouseWheel: displayed.reverseMouseWheel,
-            diagnosticLoggingEnabled: displayed.diagnosticLoggingEnabled
+            diagnosticLoggingEnabled: displayed.diagnosticLoggingEnabled,
+            hintMode: displayed.hintMode
         )
         presentationState.generalSettings.pending = reconciled
         return [.persistSettings(settingsSnapshot(source: .current, general: reconciled))]

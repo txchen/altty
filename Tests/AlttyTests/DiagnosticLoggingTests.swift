@@ -25,7 +25,7 @@ struct DiagnosticLoggingTests {
         let url = directory.appendingPathComponent("settings.json")
         let persistence = FileSettingsPersistenceAdapter(settingsURL: url)
         let general = GeneralSettings(launchAtLogin: true, listPresentation: .defaults,
-                                      reverseMouseWheel: true, diagnosticLoggingEnabled: true)
+                                      reverseMouseWheel: true, diagnosticLoggingEnabled: true, hintMode: .disabled)
         let snapshot = SettingsSnapshot(shortcuts: .defaults, exceptionRules: [], general: general)
         try persistence.saveSettings(snapshot)
         #expect(persistence.loadSettings().snapshot == snapshot)

@@ -28,7 +28,8 @@ struct AppEnvironment {
             launchAtLogin: launchAtLoginStatus == .enabled,
             listPresentation: settings.snapshot.general.listPresentation,
             reverseMouseWheel: settings.snapshot.general.reverseMouseWheel,
-            diagnosticLoggingEnabled: settings.snapshot.general.diagnosticLoggingEnabled
+            diagnosticLoggingEnabled: settings.snapshot.general.diagnosticLoggingEnabled,
+            hintMode: settings.snapshot.general.hintMode
         )
         return AppEnvironment(
             engine: SwitcherEngine(

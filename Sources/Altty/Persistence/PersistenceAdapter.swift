@@ -103,7 +103,8 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
                 preserveSettingsForDiagnosis()
                 return SettingsLoadResult(snapshot: .defaults, warning: .invalidShortcuts)
             }
-            guard current.general.isValid else {
+            guard current.general.isValid,
+                  current.general.hintMode.validationError(against: current.shortcuts) == nil else {
                 preserveSettingsForDiagnosis()
                 return SettingsLoadResult(snapshot: .defaults, warning: .invalidGeneralSettings)
             }
@@ -174,7 +175,8 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
             general: GeneralSettings(
                 launchAtLogin: settings.general.launchAtLogin,
                 listPresentation: settings.general.listPresentation,
-                reverseMouseWheel: false
+                reverseMouseWheel: false,
+                hintMode: .disabled
             )
         )
     }

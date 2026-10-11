@@ -420,7 +420,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                 size: ListSize.allCases[sizePopUp.indexOfSelectedItem]
             ),
             reverseMouseWheel: mouseScrollCheckbox.state == .on,
-            diagnosticLoggingEnabled: diagnosticLoggingCheckbox.state == .on
+            diagnosticLoggingEnabled: diagnosticLoggingCheckbox.state == .on,
+            hintMode: displayedGeneralSettings.hintMode
         ))
     }
 
