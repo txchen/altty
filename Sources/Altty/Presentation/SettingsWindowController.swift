@@ -353,18 +353,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
                 separator(),
                 shortcutRow(title: SwitcherMode.currentApp.title, recorder: currentAppRecorder, defaultBinding: ShortcutPair.defaults.currentApp),
             ]))
-            hintShortcutMessageLabel.font = .systemFont(ofSize: 12)
-            stack.addArrangedSubview(card("Hints", views: [
-                shortcutRow(title: "Show hints", recorder: hintShortcutRecorder, defaultBinding: nil,
-                            accessory: clearHintShortcutButton),
-                hintShortcutMessageLabel,
-            ]))
             shortcutPendingLabel.textColor = .secondaryLabelColor
             shortcutPendingLabel.font = .systemFont(ofSize: 12)
             shortcutErrorLabel.textColor = .systemRed
             shortcutErrorLabel.font = .systemFont(ofSize: 12)
             stack.addArrangedSubview(shortcutPendingLabel)
             stack.addArrangedSubview(shortcutErrorLabel)
+            hintShortcutMessageLabel.font = .systemFont(ofSize: 12)
+            stack.addArrangedSubview(card("Hints", views: [
+                shortcutRow(title: "Show hints", recorder: hintShortcutRecorder, defaultBinding: nil,
+                            accessory: clearHintShortcutButton),
+                hintShortcutMessageLabel,
+            ]))
         } else if pane == .exceptions {
             stack.addArrangedSubview(exceptionsController.view)
         } else if pane == .about {
