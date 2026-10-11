@@ -203,7 +203,7 @@ struct ExceptionRulesTests {
             ignore: .whenFullscreen
         ))
         let engine = SwitcherEngine(exceptionRules: [rule])
-        engine.updateFrontmostApplication("com.example.Streamer")
+        _ = engine.updateFrontmostApplication("com.example.Streamer")
         _ = engine.receive(.accessibilityChanged(.available))
 
         #expect(engine.receive(.windowServerChanged(.available)) == [

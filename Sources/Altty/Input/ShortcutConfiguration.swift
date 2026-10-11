@@ -116,6 +116,7 @@ enum ShortcutConfigurationError: Error, Equatable, Sendable {
     case missingRequiredModifier(SwitcherMode)
     case shiftIsReserved(SwitcherMode)
     case duplicateBindings
+    case conflictsWithHintShortcut(SwitcherMode)
     case unavailableShortcut(SwitcherMode)
     case shortcutReplacementFailed
     case inputMonitoringUnavailable
@@ -131,6 +132,8 @@ enum ShortcutConfigurationError: Error, Equatable, Sendable {
             "Shift is reserved for reverse \(mode.title) navigation."
         case .duplicateBindings:
             "All-Windows and Current-App must use different shortcuts."
+        case let .conflictsWithHintShortcut(mode):
+            "\(mode.title) cannot use the Hint shortcut or its Shift variant."
         case let .unavailableShortcut(mode):
             "The \(mode.title) shortcut is unavailable. Your previous shortcuts are still active."
         case .shortcutReplacementFailed:

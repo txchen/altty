@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.run(self.environment.engine.receiveSession(event))
         }
         environment.input.install { [weak self] event in self?.receive(event) }
+        environment.hintShortcut.install { [weak self] in self?.environment.hints.toggleSession() }
         environment.mouseScroll.installStatusHandler { [weak self] status in
             guard let self else { return }
             self.environment.engine.receiveMouseScrollStatus(status)
@@ -58,6 +59,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switcherPanelTask?.cancel()
         environment.presentation.dismissSwitcherPanel()
         environment.input.setShortcutsEnabled(false)
+        _ = environment.hintShortcut.setShortcut(nil)
+        environment.hints.setShortcut(nil)
         environment.mouseScroll.setEnabled(false)
         stopInventoryObservation()
         environment.accessibility.stopMonitoringAvailability()
@@ -81,9 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func receive(_ event: SwitcherEvent) {
-        environment.engine.updateFrontmostApplication(
+        run(environment.engine.updateFrontmostApplication(
             environment.exceptions.frontmostApplicationBundleIdentifier()
-        )
+        ))
         run(environment.engine.receive(event))
         refreshPresentation()
     }
@@ -143,6 +146,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 receive(.windowServerChanged(environment.windowServer.availability()))
             case let .setShortcutsEnabled(enabled):
                 setShortcutsEnabled(enabled)
+            case let .setHintShortcut(binding):
+                let registered = environment.hintShortcut.setShortcut(binding)
+                environment.hints.setShortcut(registered ? binding : nil)
+                environment.engine.receiveHintShortcutStatus(registered: registered || binding == nil)
+                refreshPresentation()
             case let .setMouseScrollReversalEnabled(enabled):
                 environment.engine.receiveMouseScrollStatus(environment.mouseScroll.setEnabled(enabled))
                 refreshPresentation()
