@@ -36,9 +36,7 @@ BUILD_OPTIONS=()
 if [[ -n "${ALTTY_SWIFT_BUILD_SYSTEM:-}" ]]; then
   BUILD_OPTIONS+=(--build-system "$ALTTY_SWIFT_BUILD_SYSTEM")
 fi
-ALTTY_RUN_FOCUS_SMOKE=0 \
-ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE=0 \
-swift test --enable-swift-testing ${BUILD_OPTIONS[@]+"${BUILD_OPTIONS[@]}"}
+swift build --build-tests ${BUILD_OPTIONS[@]+"${BUILD_OPTIONS[@]}"}
 if [[ "${ALTTY_RUN_FOCUS_SMOKE:-0}" == "1" \
     || "${ALTTY_RUN_CURRENT_APP_FOCUS_SMOKE:-0}" == "1" ]]; then
   xcrun swiftc \
@@ -69,4 +67,5 @@ xcrun swiftc \
   -Xlinker -rpath -Xlinker "$DEVELOPER_FRAMEWORKS/../usr/lib" \
   -o "$RUNNER_BINARY"
 
-exec "$RUNNER_BINARY" "$@"
+# Actor-based latency budgets must not include scheduling delays from other tests.
+exec "$RUNNER_BINARY" --no-parallel "$@"
