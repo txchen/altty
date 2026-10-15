@@ -42,7 +42,7 @@ raise "Override URL changed" unless local.values[:url] == local_url
 # Validate the actual destinations used by both workflows, including local/previous Casks.
 Dir.glob(File.join(ROOT, ".github/workflows/*.yml")).each do |workflow|
   YAML.load_file(workflow).fetch("jobs").each_value do |job|
-    job.fetch("steps").each do |step|
+    job.fetch("steps", []).each do |step|
       step.fetch("run", "").scan(/render-cask\.sh[^\n]*> "([^"\n]+\.rb)"/).each do |(path)|
         CaskContract.new(source, path)
       end

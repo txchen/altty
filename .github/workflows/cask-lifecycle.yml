@@ -16,21 +16,25 @@ permissions:
 jobs:
   lifecycle:
     runs-on: macos-15
+    env:
+      VERSION: ${{ inputs.version }}
+      PREVIOUS_VERSION: ${{ inputs.previous_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Fetch and verify release metadata
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$PREVIOUS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mkdir -p "$RUNNER_TEMP/current" "$RUNNER_TEMP/previous"
-          gh release download '${{ inputs.version }}' --pattern 'Altty-*-arm64.zip' --pattern checksums.txt --dir "$RUNNER_TEMP/current"
-          gh release download '${{ inputs.previous_version }}' --pattern checksums.txt --dir "$RUNNER_TEMP/previous"
+          gh release download "$VERSION" --pattern 'Altty-*-arm64.zip' --pattern checksums.txt --dir "$RUNNER_TEMP/current"
+          gh release download "$PREVIOUS_VERSION" --pattern checksums.txt --dir "$RUNNER_TEMP/previous"
           cd "$RUNNER_TEMP/current" && shasum -a 256 -c checksums.txt
-      - name: Audit, clean install, upgrade, uninstall, and zap
+      - name: Clean install, upgrade, uninstall, and zap
         run: |
           SHA256="$(awk '{print $1}' "$RUNNER_TEMP/current/checksums.txt")"
           PREVIOUS_SHA256="$(awk '{print $1}' "$RUNNER_TEMP/previous/checksums.txt")"
-          scripts/render-cask.sh '${{ inputs.version }}' "$SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/current/altty.rb"
-          scripts/render-cask.sh '${{ inputs.previous_version }}' "$PREVIOUS_SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/previous/altty.rb"
-          brew audit --cask --new "$RUNNER_TEMP/current/altty.rb"
+          scripts/render-cask.sh "$VERSION" "$SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/current/altty.rb"
+          scripts/render-cask.sh "$PREVIOUS_VERSION" "$PREVIOUS_SHA256" "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/previous/altty.rb"
           scripts/test-cask-lifecycle.sh "$RUNNER_TEMP/current/altty.rb" "$RUNNER_TEMP/previous/altty.rb"

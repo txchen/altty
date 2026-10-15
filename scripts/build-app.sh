@@ -8,8 +8,13 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 VERSION="${ALTTY_VERSION:-0.0.0-dev}"
 BUILD_VERSION="${ALTTY_BUILD_VERSION:-0}"
-SIGNING_IDENTITY="${ALTTY_SIGNING_IDENTITY:--}"
 BUNDLE_IDENTIFIER="${ALTTY_BUNDLE_IDENTIFIER:-app.altty.macos.dev}"
+SIGNING_IDENTITY="${ALTTY_SIGNING_IDENTITY:-}"
+if [[ -z "$SIGNING_IDENTITY" && "$BUNDLE_IDENTIFIER" == "app.altty.macos.dev" && -f "$ROOT_DIR/.altty-signing-identity" ]]; then
+  SIGNING_IDENTITY="$(cat "$ROOT_DIR/.altty-signing-identity")"
+  [[ -n "$SIGNING_IDENTITY" ]] || { echo ".altty-signing-identity must not be empty" >&2; exit 1; }
+fi
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$VERSION" != "0.0.0-dev" ]]; then
   echo "Invalid ALTTY_VERSION: $VERSION" >&2

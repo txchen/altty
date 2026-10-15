@@ -2,6 +2,25 @@
 
 Altty is a native Apple-silicon menu-bar window switcher for macOS 15 and later.
 
+## Install
+
+Requires an Apple Silicon Mac running macOS 15 or later.
+
+```sh
+brew install --cask txchen/tap/altty
+open /Applications/Altty.app
+```
+
+Grant Accessibility permission when Altty asks. Mouse wheel reversal also needs
+Input Monitoring. Screen Recording permission is not required.
+
+Quit Altty before updating:
+
+```sh
+brew update
+brew upgrade --cask altty
+```
+
 ## Build
 
 ```sh
@@ -17,6 +36,16 @@ The app bundle is created at:
 
 The build script produces an arm64 development application with the distinct
 `app.altty.macos.dev` identity at `.build/Altty.app`.
+For stable local signing, save the full name of an installed code-signing identity
+(Apple Development or Developer ID Application) as one line in
+`.altty-signing-identity`. This ignored, machine-local file applies only to the
+development bundle; `ALTTY_SIGNING_IDENTITY` overrides it. A configured identity
+that cannot sign causes the build to fail instead of falling back to ad-hoc signing.
+Without either setting, builds use ad-hoc signing. Keep the bundle identifier,
+signing identity, and launch path stable to help macOS retain privacy permissions
+across builds. Switching from ad-hoc signing may require granting permissions once
+again. Local builds do not need notarization.
+
 `scripts/test.sh` runs the public `SwitcherEngine` tests on both Command Line
 Tools-only and full-Xcode installations.
 
@@ -45,12 +74,42 @@ passes strict signature and content inspection. Delete the output directory
 before deliberately rebuilding the same version; release artifacts are never
 overwritten.
 
-Pushing a `MAJOR.MINOR.PATCH` tag runs the approval-gated `production-release`
-job. That job imports a Developer ID Application certificate into an ephemeral
-keychain, notarizes and staples the app, rebuilds and re-verifies the final ZIP,
-then publishes the immutable GitHub Release and opens a project tap Cask PR.
-The repository environment must supply the Apple credentials documented by the
-workflow plus `HOMEBREW_TAP_TOKEN` and `HOMEBREW_TAP_REPOSITORY`.
+## Publish a release
+
+Pushes to `master` and pull requests run tests, scan Git history for credentials,
+and build an ad-hoc-signed package without Apple credentials.
+
+Push a `MAJOR.MINOR.PATCH` tag after CI passes:
+
+```sh
+git tag 0.1.0
+git push origin 0.1.0
+```
+
+The Release workflow reruns CI, imports the Developer ID Application certificate
+into a temporary keychain, builds, and submits the ZIP to Apple. After Apple
+accepts it, the workflow staples the ticket, verifies the final ZIP, tests Homebrew
+installation and removal, and publishes the GitHub Release. A failed or timed-out
+notarization does not publish a release. The workflow saves the package and
+submission receipt as Actions artifacts for 14 days.
+
+Set these secrets in the `production-release` GitHub environment:
+
+- `DEVELOPER_ID_APPLICATION_P12_BASE64`: base64-encoded certificate and private key.
+- `DEVELOPER_ID_APPLICATION_P12_PASSWORD`: the export password.
+- `APPLE_DEVELOPER_ID_NAME`: the organization name on the certificate.
+- `APPLE_TEAM_ID`: the Apple team identifier.
+- `APPLE_ID`: the Apple Account email address.
+- `APPLE_APP_SPECIFIC_PASSWORD`: an app-specific password for notarization.
+
+The public [Homebrew tap](https://github.com/txchen/homebrew-tap) checks for new
+stable releases twice an hour. Its Update Altty workflow verifies the downloaded
+package and tests installation before committing the new Cask. Later releases
+also test upgrading from the previous Cask. Run that workflow manually to update
+the tap immediately after publication. Each repository uses its own GitHub token;
+the tap needs no Apple credentials or cross-repository write token.
+
+## Optional hardware checks
 
 The normal test run never changes focus. Explicitly exercise the real,
 read-only SkyLight capability check after a macOS update with:

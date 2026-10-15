@@ -5,3 +5,7 @@ DerivedData/
 *.xcworkspace/
 *.swp
 /.scratch/app-icon/
+/.altty-signing-identity
+*.p12
+*.p8
+*.certSigningRequest
