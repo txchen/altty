@@ -82,7 +82,10 @@ struct PerformanceBudgetTests {
         #expect(snapshot.focusedWindow == nil)
     }
 
-    @Test("a 100-window filter sort and snapshot workload stays below ten milliseconds p95")
+    @Test(
+        "a 100-window filter sort and snapshot workload stays below ten milliseconds p95",
+        .enabled(if: ProcessInfo.processInfo.environment["ALTTY_RUN_PERFORMANCE_BUDGET"] == "1")
+    )
     func hundredWindowMicrobenchmark() async {
         var samples: [Int64] = []
         samples.reserveCapacity(100)

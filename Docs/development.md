@@ -90,6 +90,17 @@ also test upgrading from the previous Cask. Run that workflow manually to update
 the tap immediately after publication. Each repository uses its own GitHub token;
 the tap needs no Apple credentials or cross-repository write token.
 
+## Optional performance budget
+
+The normal test run skips the wall-clock 100-window microbenchmark because shared
+CI runner scheduling makes its timing unreliable. Inventory lifecycle and other
+functional checks still run by default. On an idle development Mac, opt in to the
+unchanged p95 budget of less than 10 ms with:
+
+```sh
+ALTTY_RUN_PERFORMANCE_BUDGET=1 scripts/test.sh --filter hundredWindowMicrobenchmark
+```
+
 ## Optional hardware checks
 
 The normal test run never changes focus. Explicitly exercise the real,
