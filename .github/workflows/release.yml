@@ -13,7 +13,7 @@ jobs:
   release:
     needs: checks
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 150
     environment: production-release
     permissions:
       contents: write
@@ -48,7 +48,7 @@ jobs:
           echo "::add-mask::$KEYCHAIN_PASSWORD"
           printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security set-keychain-settings -lut 10800 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security import "$RUNNER_TEMP/developer-id.p12" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -k "$KEYCHAIN"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
@@ -70,7 +70,7 @@ jobs:
           xcrun notarytool submit ".build/artifacts/$ARTIFACT" --keychain-profile ci-notary --keychain "$RUNNER_TEMP/altty-signing.keychain-db" --output-format json > .build/artifacts/notarization-submission.json
           SUBMISSION_ID="$(python3 -c 'import json; print(json.load(open(".build/artifacts/notarization-submission.json"))["id"])')"
           echo "Apple submission: $SUBMISSION_ID"
-          xcrun notarytool wait "$SUBMISSION_ID" --keychain-profile ci-notary --keychain "$RUNNER_TEMP/altty-signing.keychain-db" --timeout 40m
+          xcrun notarytool wait "$SUBMISSION_ID" --keychain-profile ci-notary --keychain "$RUNNER_TEMP/altty-signing.keychain-db" --timeout 2h
           xcrun notarytool log "$SUBMISSION_ID" --keychain-profile ci-notary --keychain "$RUNNER_TEMP/altty-signing.keychain-db" .build/artifacts/notarization-log.json
       - name: Staple and verify the final ZIP
         run: |
