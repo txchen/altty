@@ -5,6 +5,12 @@ keyboard, and control mouse scrolling from a native menu bar app.
 
 **Apple Silicon · macOS 15 or later**
 
+<p align="center">
+  <img src="Docs/images/window-switcher.png" alt="Altty window switcher showing Safari, Notes, and Terminal, with Notes selected" width="520">
+</p>
+
+<p align="center"><sub>Window switching with sample windows.</sub></p>
+
 ## Features
 
 - **Switch windows.** Press **⌥ Tab** to switch between windows on your current
@@ -49,6 +55,10 @@ before enabling it.
 
 See the [usage guide](Docs/usage.md) for keyboard hint controls, permissions, and
 app compatibility notes.
+
+<p align="center">
+  <img src="Docs/images/settings.png" alt="Altty settings for window list size, mouse wheel reversal, keyboard hints, and permissions" width="680">
+</p>
 
 ## Update or uninstall
 
