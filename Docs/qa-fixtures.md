@@ -102,3 +102,17 @@ Log subsystem `app.altty.macos`, category `Shortcut`: `physical_press`,
 `carbon_press`, `queued`, `handling`, `wait`, `wait_resumed`, `invoked`, `end`.
 These stages contain no window titles or ordinary typed input. A passing actor
 race regression does not prove all global-input failure modes are resolved.
+
+## Mouse Mode HUD and settings
+
+Run `ALTTY_SWIFT_BUILD_SYSTEM=native scripts/check-mouse-visuals.sh` to render
+production AppKit views into `.build/mouse-visuals/current`. The fixture adds
+slow, normal, fast, scanning, and label-entry HUD states in light and dark
+appearance at 1x and 2x. It also renders the existing 36 switcher and settings
+scenarios. It does not change accepted baselines or user settings.
+
+Inspect General and Shortcuts for the new controls. The General pane scrolls
+to the permissions and diagnostics cards below Mouse Mode. Compare the
+unchanged switcher, Exceptions, and About images with their accepted baselines.
+HUD snapshots prove layout only. They do not prove hardware key delivery,
+fullscreen visibility, display transitions, or permission and lock behavior.

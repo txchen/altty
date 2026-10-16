@@ -20,8 +20,20 @@ import AppKit
         NSApp.setActivationPolicy(.accessory)
         let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let includesMouse = ProcessInfo.processInfo.environment["ALTTY_MOUSE_VISUALS"] == "1"
         for theme in ["light", "dark"] {
             let appearance = NSAppearance(named: theme == "light" ? .aqua : .darkAqua)!
+            if includesMouse {
+                for state: MouseHUDState in [.movement(.slow), .movement(.normal), .movement(.fast), .scanning, .picking] {
+                    let hud = MouseHUDView(state: state, shortcut: "⌥M")
+                    let window = NSPanel(contentRect: hud.bounds, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+                    window.contentView = hud
+                    window.orderFrontRegardless()
+                    try await capture(hud, appearance: appearance,
+                                      name: "mouse-\(state.title.replacingOccurrences(of: " ", with: "-"))-\(theme)", output: output)
+                    window.orderOut(nil)
+                }
+            }
             let panel = SwitcherPanelController(displayProvider: FixedDisplays())
             for scenario in ["short", "cjk", "scroll", "removed"] {
                 var rows = (1...(scenario == "scroll" ? 24 : 3)).map { index in
@@ -72,7 +84,7 @@ import AppKit
             "renderer": "AppKit cacheDisplay; synthetic content; inactive within-window material", "scales": "1,2"]
         try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
             .write(to: output.appendingPathComponent("environment.json"))
-        print("Rendered 36 synthetic UI snapshots to \(output.path)")
+        print("Rendered \(includesMouse ? 56 : 36) synthetic UI snapshots to \(output.path)")
     }
 
     @MainActor private static func descendants(_ view: NSView) -> [NSView] {

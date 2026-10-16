@@ -7,6 +7,8 @@ struct AppEnvironment {
     let mouseScroll: any MouseScrollAdapter
     let hintShortcut: any HintShortcutAdapter
     let hints: any HintSessionController
+    var mouseShortcut: (any HintShortcutAdapter)? = nil
+    var mouse: SystemMouseSessionController? = nil
     let windowServer: any WindowServerAdapter
     let accessibility: any AccessibilityAdapter
     let workspace: any WorkspaceAdapter
@@ -31,8 +33,10 @@ struct AppEnvironment {
             listPresentation: settings.snapshot.general.listPresentation,
             reverseMouseWheel: settings.snapshot.general.reverseMouseWheel,
             diagnosticLoggingEnabled: settings.snapshot.general.diagnosticLoggingEnabled,
-            hintMode: settings.snapshot.general.hintMode
+            hintMode: settings.snapshot.general.hintMode,
+            mouseMode: settings.snapshot.general.mouseMode
         )
+        let navigationTap = CoreGraphicsHintKeyboardTap()
         return AppEnvironment(
             engine: SwitcherEngine(
                 inventory: inventory,
@@ -45,7 +49,9 @@ struct AppEnvironment {
             input: SystemInputAdapter(shortcuts: settings.snapshot.shortcuts),
             mouseScroll: SystemMouseScrollAdapter(),
             hintShortcut: CarbonHintShortcutAdapter(),
-            hints: SystemHintSessionController(),
+            hints: SystemHintSessionController(tap: navigationTap),
+            mouseShortcut: CarbonHintShortcutAdapter(signature: 0x414C544D),
+            mouse: SystemMouseSessionController(tap: navigationTap),
             windowServer: SystemWindowServerAdapter(),
             accessibility: SystemAccessibilityAdapter(),
             workspace: workspace,

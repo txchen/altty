@@ -5,6 +5,37 @@ import Testing
 
 @MainActor
 struct SettingsPresentationTests {
+    @Test func mouseModeControlsRecordClearAndPreserveOtherSettings() throws {
+        _ = NSApplication.shared
+        var commands: [SwitcherCommand] = []
+        let controller = SettingsWindowController(exceptions: RecordingExceptionsAdapter()) { commands.append($0) }
+        defer { controller.close() }
+        let binding = ShortcutBinding(key: ShortcutKey(keyCode: 46, displayName: "M"), modifiers: [.option])
+        var state = SwitcherPresentationState(hasLaunched: true, accessibility: .available, windowServer: .unavailable)
+        let original = GeneralSettings(launchAtLogin: true, listPresentation: .init(size: .medium),
+                                       reverseMouseWheel: true, diagnosticLoggingEnabled: true, hintMode: .disabled,
+                                       mouseMode: HintModeSettings(enabled: false, shortcut: binding))
+        state.generalSettings.current = original
+        controller.update(state: state)
+        controller.toggleMouseMode()
+        let enabled = GeneralSettings(launchAtLogin: true, listPresentation: .init(size: .medium),
+                                      reverseMouseWheel: true, diagnosticLoggingEnabled: true, hintMode: .disabled,
+                                      mouseMode: HintModeSettings(enabled: true, shortcut: binding))
+        #expect(commands.last == .replaceGeneralSettings(enabled))
+        state.generalSettings.current = enabled
+        controller.update(state: state)
+        controller.toggleDiagnosticLogging()
+        guard case let .replaceGeneralSettings(changed) = commands.last else { Issue.record("Missing settings update"); return }
+        #expect(changed.mouseMode == enabled.mouseMode)
+        controller.clearMouseShortcutBinding()
+        #expect(commands.last == .updateMouseShortcut(nil))
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.option],
+                                                 timestamp: 0, windowNumber: 0, context: nil,
+                                                 characters: "m", charactersIgnoringModifiers: "m", isARepeat: false, keyCode: 46))
+        controller.recordMouseShortcut(with: event)
+        #expect(commands.last == .updateMouseShortcut(binding))
+    }
+
     @Test func loggingCheckboxPreservesOtherSettingsAndRestoresItsSavedState() {
         _ = NSApplication.shared
         var commands: [SwitcherCommand] = []

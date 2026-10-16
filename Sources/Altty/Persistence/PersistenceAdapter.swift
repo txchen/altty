@@ -104,7 +104,8 @@ struct FileSettingsPersistenceAdapter: PersistenceAdapter {
                 return SettingsLoadResult(snapshot: .defaults, warning: .invalidShortcuts)
             }
             guard current.general.isValid,
-                  current.general.hintMode.validationError(against: current.shortcuts) == nil else {
+                  current.general.hintMode.validationError(against: current.shortcuts) == nil,
+                  current.general.navigationValidationError(against: current.shortcuts) == nil else {
                 preserveSettingsForDiagnosis()
                 return SettingsLoadResult(snapshot: .defaults, warning: .invalidGeneralSettings)
             }

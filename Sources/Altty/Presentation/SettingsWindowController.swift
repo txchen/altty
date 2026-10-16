@@ -64,7 +64,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         let symbol: String
         let detail: String
 
-        static let general = Pane(title: "General", symbol: "gearshape", detail: "Startup, window appearance, mouse scrolling, and keyboard hints.")
+        static let general = Pane(title: "General", symbol: "gearshape", detail: "Startup, window appearance, keyboard mouse controls, and hints.")
         static let shortcuts = Pane(title: "Shortcuts", symbol: "keyboard", detail: "Hold your shortcut to choose a window. Press Shift to go back; release to switch.")
         static let exceptions = Pane(title: "Exceptions", symbol: "list.bullet.rectangle", detail: "Choose which apps appear in the switcher and where shortcuts stay with the app.")
         static let about = Pane(title: "About", symbol: "info.circle", detail: "A lightweight window switcher for Mac.")
@@ -92,6 +92,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         target: self,
         action: #selector(generalControlsChanged)
     )
+    private lazy var mouseModeCheckbox = NSButton(checkboxWithTitle: "Enable Mouse Mode", target: self, action: #selector(generalControlsChanged))
+    private let mouseShortcutMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private let mouseModeMessageLabel = NSTextField(wrappingLabelWithString: "")
+    private lazy var mouseShortcutRecorder = ShortcutRecorderControl(name: "Mouse", binding: nil) { [weak self] binding in
+        self?.onCommand(.updateMouseShortcut(binding))
+    }
+    private lazy var clearMouseShortcutButton = NSButton(title: "Clear", target: self, action: #selector(clearMouseShortcut))
     private let hintModeMessageLabel = NSTextField(wrappingLabelWithString: "")
     private let hintShortcutMessageLabel = NSTextField(wrappingLabelWithString: "")
     private lazy var clearHintShortcutButton = NSButton(
@@ -239,6 +246,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         inputMonitoringButton.isHidden = !state.generalSettings.current.reverseMouseWheel
             || state.generalSettings.mouseScrollStatus != .inputMonitoringRequired
         mousePermissionActions.isHidden = inputMonitoringButton.isHidden
+        let mouseMessage = state.generalSettings.mouseModeMessage(accessibility: state.accessibility)
+        mouseModeMessageLabel.stringValue = mouseMessage ?? ""
+        mouseModeMessageLabel.isHidden = mouseMessage == nil
+        mouseShortcutMessageLabel.stringValue = state.generalSettings.error ?? mouseMessage ?? ""
+        mouseShortcutMessageLabel.isHidden = mouseShortcutMessageLabel.stringValue.isEmpty
+        mouseShortcutMessageLabel.font = .systemFont(ofSize: 12)
+        mouseShortcutMessageLabel.textColor = state.generalSettings.error == nil ? .secondaryLabelColor : .systemRed
         let hintMessage = state.generalSettings.hintModeMessage(accessibility: state.accessibility)
         hintModeMessageLabel.stringValue = hintMessage ?? ""
         hintModeMessageLabel.isHidden = hintMessage == nil
@@ -335,6 +349,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             hintModeMessageLabel.textColor = .secondaryLabelColor
             hintModeMessageLabel.font = .systemFont(ofSize: 12)
             stack.addArrangedSubview(card("Hints", views: [hintModeCheckbox, hintDetail, hintModeMessageLabel]))
+            let mouseModeDetail = NSTextField(wrappingLabelWithString: "Hold WASD to move the pointer. U slows down, I speeds up. J clicks left, K clicks right. F shows hints to move to a target. Esc goes back or exits.")
+            mouseModeDetail.font = .systemFont(ofSize: 12)
+            mouseModeDetail.textColor = .secondaryLabelColor
+            mouseModeMessageLabel.font = .systemFont(ofSize: 12)
+            stack.addArrangedSubview(card("Mouse Mode", views: [mouseModeCheckbox, mouseModeDetail, mouseModeMessageLabel]))
             statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
             accessibilityDetailLabel.font = .systemFont(ofSize: 12)
             accessibilityDetailLabel.textColor = .secondaryLabelColor
@@ -359,6 +378,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             shortcutErrorLabel.font = .systemFont(ofSize: 12)
             stack.addArrangedSubview(shortcutPendingLabel)
             stack.addArrangedSubview(shortcutErrorLabel)
+            stack.addArrangedSubview(card("Mouse Mode", views: [
+                shortcutRow(title: "Toggle Mouse Mode", recorder: mouseShortcutRecorder, defaultBinding: nil,
+                            accessory: clearMouseShortcutButton),
+                mouseShortcutMessageLabel,
+            ]))
             hintShortcutMessageLabel.font = .systemFont(ofSize: 12)
             stack.addArrangedSubview(card("Hints", views: [
                 shortcutRow(title: "Show hints", recorder: hintShortcutRecorder, defaultBinding: nil,
@@ -434,6 +458,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     @objc private func openProject() { performAboutAction(.project) }
     @objc private func openSupport() { performAboutAction(.support) }
     @objc private func openLoginItemsSettings() { onCommand(.openLoginItemsSettings) }
+    @objc private func clearMouseShortcut() { onCommand(.updateMouseShortcut(nil)) }
     @objc private func clearHintShortcut() { onCommand(.updateHintShortcut(nil)) }
 
     func advanceKeyboardFocus() {
@@ -457,6 +482,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     func toggleMouseScrollReversal() { mouseScrollCheckbox.performClick(nil) }
     func toggleDiagnosticLogging() { diagnosticLoggingCheckbox.performClick(nil) }
+    func toggleMouseMode() { mouseModeCheckbox.performClick(nil) }
+    func clearMouseShortcutBinding() { clearMouseShortcutButton.performClick(nil) }
+    func recordMouseShortcut(with event: NSEvent) {
+        mouseShortcutRecorder.performClick(nil)
+        mouseShortcutRecorder.keyDown(with: event)
+    }
     func toggleHintMode() { hintModeCheckbox.performClick(nil) }
     func clearHintShortcutBinding() { clearHintShortcutButton.performClick(nil) }
     func recordHintShortcut(with event: NSEvent) {
@@ -478,7 +509,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             hintMode: HintModeSettings(
                 enabled: hintModeCheckbox.state == .on,
                 shortcut: displayedGeneralSettings.hintMode.shortcut
-            )
+            ),
+            mouseMode: HintModeSettings(enabled: mouseModeCheckbox.state == .on, shortcut: displayedGeneralSettings.mouseMode.shortcut)
         ))
     }
 
@@ -488,6 +520,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         launchAtLoginCheckbox.state = state.displayed.launchAtLogin ? .on : .off
         mouseScrollCheckbox.state = state.displayed.reverseMouseWheel ? .on : .off
         diagnosticLoggingCheckbox.state = state.displayed.diagnosticLoggingEnabled ? .on : .off
+        mouseModeCheckbox.state = state.displayed.mouseMode.enabled ? .on : .off
+        mouseShortcutRecorder.setBinding(state.displayed.mouseMode.shortcut)
+        clearMouseShortcutButton.isEnabled = state.displayed.mouseMode.shortcut != nil
         hintModeCheckbox.state = state.displayed.hintMode.enabled ? .on : .off
         hintShortcutRecorder.setBinding(state.displayed.hintMode.shortcut)
         clearHintShortcutButton.isEnabled = state.displayed.hintMode.shortcut != nil
@@ -512,7 +547,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         mouseScrollCheckbox.nextKeyView = inputMonitoringButton
         inputMonitoringButton.nextKeyView = revealApplicationButton
         revealApplicationButton.nextKeyView = hintModeCheckbox
-        hintModeCheckbox.nextKeyView = sizePopUp
+        hintModeCheckbox.nextKeyView = mouseModeCheckbox
+        mouseModeCheckbox.nextKeyView = sizePopUp
         sizePopUp.nextKeyView = openLoginItemsButton
         openLoginItemsButton.nextKeyView = diagnosticLoggingCheckbox
         diagnosticLoggingCheckbox.nextKeyView = sidebar

@@ -117,6 +117,7 @@ enum ShortcutConfigurationError: Error, Equatable, Sendable {
     case shiftIsReserved(SwitcherMode)
     case duplicateBindings
     case conflictsWithHintShortcut(SwitcherMode)
+    case conflictsWithMouseShortcut(SwitcherMode)
     case unavailableShortcut(SwitcherMode)
     case shortcutReplacementFailed
     case inputMonitoringUnavailable
@@ -134,6 +135,8 @@ enum ShortcutConfigurationError: Error, Equatable, Sendable {
             "All-Windows and Current-App must use different shortcuts."
         case let .conflictsWithHintShortcut(mode):
             "\(mode.title) cannot use the Hint shortcut or its Shift variant."
+        case let .conflictsWithMouseShortcut(mode):
+            "\(mode.title) cannot use the Mouse shortcut or its Shift variant."
         case let .unavailableShortcut(mode):
             "The \(mode.title) shortcut is unavailable. Your previous shortcuts are still active."
         case .shortcutReplacementFailed:

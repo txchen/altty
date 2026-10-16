@@ -107,6 +107,7 @@ enum SwitcherCommand: Equatable, Sendable {
     case replaceExceptionRules([ExceptionRule])
     case replaceGeneralSettings(GeneralSettings)
     case updateHintShortcut(ShortcutBinding?)
+    case updateMouseShortcut(ShortcutBinding?)
 }
 
 enum SwitcherEvent: Equatable, Sendable {
@@ -124,6 +125,7 @@ enum SwitcherEffect: Equatable, Sendable {
     case checkWindowServer
     case setShortcutsEnabled(Bool)
     case setHintShortcut(ShortcutBinding?)
+    case setMouseShortcut(ShortcutBinding?)
     case endActiveSession
     case releaseAccessibilityObservers
     case recordDiagnostic(DiagnosticEvent)
@@ -306,6 +308,7 @@ final class SwitcherEngine {
     private var exceptionShortcutsEnabled: Bool? = true
     private var exceptionForegroundContext = ExceptionForegroundContext.unknown
     private var requestedHintShortcut: ShortcutBinding?
+    private var requestedMouseShortcut: ShortcutBinding?
     private var suppressedFocusPromotions: [WindowIdentity: Int] = [:]
     private var nextFocusTransactionID: UInt64 = 1
     private var committedSwitchWaiters: [CheckedContinuation<Void, Never>] = []
@@ -681,7 +684,8 @@ final class SwitcherEngine {
                 generalSettings: generalSettings
             )
             requestedHintShortcut = nil
-            return [.setShortcutsEnabled(false), .setHintShortcut(nil), .checkAccessibility, .checkWindowServer]
+            requestedMouseShortcut = nil
+            return [.setShortcutsEnabled(false), .setHintShortcut(nil), .setMouseShortcut(nil), .checkAccessibility, .checkWindowServer]
         case .accessibilityStatusMayHaveChanged:
             return [.checkAccessibility]
         case .systemDidWake:
@@ -706,6 +710,8 @@ final class SwitcherEngine {
             return replaceExceptionRules(rules)
         case let .replaceGeneralSettings(settings):
             return replaceGeneralSettings(settings)
+        case let .updateMouseShortcut(binding):
+            return replaceGeneralSettings(presentationState.generalSettings.displayed.replacingMouseShortcut(binding))
         case let .updateHintShortcut(binding):
             return replaceGeneralSettings(
                 presentationState.generalSettings.displayed.replacingHintShortcut(binding)
@@ -751,7 +757,8 @@ final class SwitcherEngine {
             listPresentation: displayed.listPresentation,
             reverseMouseWheel: displayed.reverseMouseWheel,
             diagnosticLoggingEnabled: displayed.diagnosticLoggingEnabled,
-            hintMode: displayed.hintMode
+            hintMode: displayed.hintMode,
+            mouseMode: displayed.mouseMode
         )
         presentationState.generalSettings.pending = reconciled
         return [.persistSettings(settingsSnapshot(source: .current, general: reconciled))]
@@ -779,9 +786,10 @@ final class SwitcherEngine {
             presentationState.shortcutSettings.error = nil
             presentationState.shortcutSettings.recoveryWarning = "Saved shortcuts were unavailable, so Altty restored the defaults. \(error.message)"
             let general = presentationState.generalSettings.current
-            let recoveredGeneral = general.hintMode.validationError(against: .defaults) == nil
-                ? nil
-                : general.replacingHintShortcut(nil)
+            var recovered = general
+            if recovered.hintMode.validationError(against: .defaults) != nil { recovered = recovered.replacingHintShortcut(nil) }
+            if recovered.navigationValidationError(against: .defaults) != nil { recovered = recovered.replacingMouseShortcut(nil) }
+            let recoveredGeneral = recovered == general ? nil : recovered
             if let recoveredGeneral { presentationState.generalSettings.pending = recoveredGeneral }
             return [.persistSettings(settingsSnapshot(
                 source: .current,
@@ -880,6 +888,11 @@ final class SwitcherEngine {
             presentationState.shortcutSettings.error = .conflictsWithHintShortcut(mode)
             return []
         }
+        if [general.current, general.displayed].contains(where: { $0.navigationValidationError(against: pair) != nil }) {
+            presentationState.shortcutSettings.pending = nil
+            presentationState.shortcutSettings.error = .conflictsWithMouseShortcut(mode)
+            return []
+        }
         presentationState.shortcutSettings.pending = pair
         presentationState.shortcutSettings.error = nil
         return activeSwitchSession == nil ? [.replaceShortcuts(pair)] : []
@@ -914,6 +927,11 @@ final class SwitcherEngine {
         if let error = [shortcuts.current, shortcuts.pending].compactMap({ $0 }).lazy
             .compactMap({ settings.hintMode.validationError(against: $0) }).first {
             presentationState.generalSettings.hintShortcutError = error
+            return []
+        }
+        if let error = [shortcuts.current, shortcuts.pending].compactMap({ $0 }).lazy
+            .compactMap({ settings.navigationValidationError(against: $0) }).first {
+            presentationState.generalSettings.error = error
             return []
         }
         presentationState.generalSettings.hintShortcutError = nil
@@ -995,9 +1013,19 @@ final class SwitcherEngine {
             && exceptionShortcutsEnabled != false
             ? hintMode.shortcut
             : nil
-        guard desired != requestedHintShortcut else { return [] }
-        requestedHintShortcut = desired
-        return [.setHintShortcut(desired)]
+        let mouse = presentationState.generalSettings.current.mouseMode
+        let desiredMouse = mouse.enabled && presentationState.accessibility == .available
+            && exceptionShortcutsEnabled != false ? mouse.shortcut : nil
+        var effects: [SwitcherEffect] = []
+        if desired != requestedHintShortcut {
+            requestedHintShortcut = desired
+            effects.append(.setHintShortcut(desired))
+        }
+        if desiredMouse != requestedMouseShortcut {
+            requestedMouseShortcut = desiredMouse
+            effects.append(.setMouseShortcut(desiredMouse))
+        }
+        return effects
     }
 
     private func beginReadinessCheck() -> [SwitcherEffect] {
@@ -1093,6 +1121,10 @@ final class SwitcherEngine {
 
     func receiveMouseScrollStatus(_ status: MouseScrollStatus) {
         presentationState.generalSettings.mouseScrollStatus = status
+    }
+
+    func receiveMouseShortcutStatus(registered: Bool) {
+        presentationState.generalSettings.mouseShortcutUnavailable = !registered
     }
 
     func receiveHintShortcutStatus(registered: Bool) {

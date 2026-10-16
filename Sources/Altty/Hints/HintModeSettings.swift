@@ -26,12 +26,14 @@ enum HintShortcutError: Error, Equatable, Sendable {
     case conflictsWithSwitcher
     case unavailable
 
-    var message: String {
+    var message: String { message(for: "Hint") }
+
+    func message(for modeName: String) -> String {
         switch self {
-        case .missingMainKey: "Choose a main key for the Hint shortcut."
-        case .missingRequiredModifier: "The Hint shortcut requires Option, Control, or Command."
+        case .missingMainKey: "Choose a main key for the \(modeName) shortcut."
+        case .missingRequiredModifier: "The \(modeName) shortcut requires Option, Control, or Command."
         case .conflictsWithSwitcher: "This shortcut is already used by a window switcher."
-        case .unavailable: "The Hint shortcut is used by another application. Choose a different shortcut."
+        case .unavailable: "The \(modeName) shortcut is used by another application. Choose a different shortcut."
         }
     }
 }

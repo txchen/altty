@@ -16,7 +16,7 @@ private let hintCarbonHotKeyHandler: EventHandlerUPP = { _, event, userData in
         nil,
         &identifier
     ) == noErr,
-          identifier.signature == hintHotKeySignature else {
+          identifier.signature == Unmanaged<CarbonHintShortcutAdapter>.fromOpaque(userData).takeUnretainedValue().signature else {
         return OSStatus(eventNotHandledErr)
     }
     let adapter = Unmanaged<CarbonHintShortcutAdapter>.fromOpaque(userData).takeUnretainedValue()
@@ -28,6 +28,7 @@ private let hintCarbonHotKeyHandler: EventHandlerUPP = { _, event, userData in
 /// pair transaction and its handler never see it.
 @MainActor
 final class CarbonHintShortcutAdapter: HintShortcutAdapter {
+    let signature: OSType
     private let registrar: any HotKeyRegistrar
     private let installsEventHandler: Bool
     private var onPress: (@MainActor () -> Void)?
@@ -35,10 +36,12 @@ final class CarbonHintShortcutAdapter: HintShortcutAdapter {
     private(set) var registeredShortcut: ShortcutBinding?
 
     init(
-        registrar: any HotKeyRegistrar = CarbonHotKeyRegistrar(signature: hintHotKeySignature),
+        registrar: (any HotKeyRegistrar)? = nil,
+        signature: OSType = hintHotKeySignature,
         installsEventHandler: Bool = true
     ) {
-        self.registrar = registrar
+        self.signature = signature
+        self.registrar = registrar ?? CarbonHotKeyRegistrar(signature: signature)
         self.installsEventHandler = installsEventHandler
     }
 

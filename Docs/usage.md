@@ -74,3 +74,39 @@ All entries can be edited or deleted in Settings → Exceptions. Saved lists, in
 an intentionally empty list and lists migrated from older versions, are preserved.
 These defaults are also used by the existing safe-defaults recovery path when a
 settings file cannot be loaded; the original invalid file is preserved for diagnosis.
+
+## Move the pointer with the keyboard
+
+Turn on **Enable Mouse Mode** in Settings → General. In Settings → Shortcuts,
+record **Toggle Mouse Mode**. Mouse Mode needs Accessibility permission.
+
+Press your recorded shortcut, then use these keys. The HUD stays visible while
+Mouse Mode is active.
+
+| Key | Action |
+|---|---|
+| Hold W, A, S, or D | Move up, left, down, or right |
+| Hold U | Move slowly |
+| Hold I | Move quickly |
+| J | Left click once |
+| K | Right click once |
+| F | Show hints for pointer placement |
+| Escape in hints | Return to Mouse Mode |
+| Escape in Mouse Mode | Exit |
+| Recorded Mouse shortcut | Exit from either phase |
+
+Release a movement key to stop that direction. Diagonal movement has the same
+speed as movement along one axis. U takes priority when U and I are both held.
+J and K do not repeat when held. Mouse Mode remains active after clicks and
+when you change applications.
+
+After F, type a complete label to move the pointer onto that element. This
+does not click or activate the element. Mouse Mode resumes with movement
+stopped. Release any held movement keys, then press them again to move.
+Standalone keyboard hints keep their separate Return-to-click behavior.
+
+A Command, Control, or Option chord that is not the Mouse shortcut exits Mouse
+Mode and passes through to the application. Opening Altty's window switcher
+also exits Mouse Mode. An Exception Rule with Ignore, permission loss, secure
+input, sleep, or screen lock ends the session. Start a new session after the
+condition clears. Mouse Mode does not drag, scroll, or use image recognition.

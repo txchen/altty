@@ -7,6 +7,14 @@ struct GeneralSettingsState: Equatable, Sendable {
     var mouseScrollStatus: MouseScrollStatus = .disabled
     var hintShortcutError: HintShortcutError?
     var hintShortcutUnavailable = false
+    var mouseShortcutUnavailable = false
+
+    func mouseModeMessage(accessibility: Availability) -> String? {
+        guard displayed.mouseMode.enabled else { return nil }
+        if displayed.mouseMode.shortcut == nil { return "Record a Mouse shortcut in Shortcuts to use Mouse Mode." }
+        if accessibility != .available { return "Mouse Mode needs Accessibility permission." }
+        return mouseShortcutUnavailable ? "Mouse Mode could not start. Secure Input may be active, or the shortcut may be unavailable. Check readiness and try again." : nil
+    }
 
     var displayed: GeneralSettings { pending ?? current }
     var inlineMessage: String? { error ?? recoveryWarning }

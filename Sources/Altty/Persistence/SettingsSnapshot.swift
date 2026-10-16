@@ -54,23 +54,26 @@ struct GeneralSettings: Codable, Equatable, Sendable {
     let reverseMouseWheel: Bool
     let diagnosticLoggingEnabled: Bool
     let hintMode: HintModeSettings
+    let mouseMode: HintModeSettings
 
     init(
         launchAtLogin: Bool,
         listPresentation: ListPresentationPreferences,
         reverseMouseWheel: Bool = false,
         diagnosticLoggingEnabled: Bool = false,
-        hintMode: HintModeSettings
+        hintMode: HintModeSettings,
+        mouseMode: HintModeSettings = .disabled
     ) {
         self.launchAtLogin = launchAtLogin
         self.listPresentation = listPresentation
         self.reverseMouseWheel = reverseMouseWheel
         self.diagnosticLoggingEnabled = diagnosticLoggingEnabled
         self.hintMode = hintMode
+        self.mouseMode = mouseMode
     }
 
     private enum CodingKeys: String, CodingKey {
-        case launchAtLogin, listPresentation, reverseMouseWheel, diagnosticLoggingEnabled, hintMode
+        case launchAtLogin, listPresentation, reverseMouseWheel, diagnosticLoggingEnabled, hintMode, mouseMode
     }
 
     init(from decoder: any Decoder) throws {
@@ -80,6 +83,7 @@ struct GeneralSettings: Codable, Equatable, Sendable {
         reverseMouseWheel = try values.decode(Bool.self, forKey: .reverseMouseWheel)
         diagnosticLoggingEnabled = try values.decodeIfPresent(Bool.self, forKey: .diagnosticLoggingEnabled) ?? false
         hintMode = try values.decodeIfPresent(HintModeSettings.self, forKey: .hintMode) ?? .disabled
+        mouseMode = try values.decodeIfPresent(HintModeSettings.self, forKey: .mouseMode) ?? .disabled
     }
 
     var isValid: Bool { listPresentation.isValid }
@@ -90,9 +94,25 @@ struct GeneralSettings: Codable, Equatable, Sendable {
             listPresentation: listPresentation,
             reverseMouseWheel: reverseMouseWheel,
             diagnosticLoggingEnabled: diagnosticLoggingEnabled,
-            hintMode: HintModeSettings(enabled: hintMode.enabled, shortcut: shortcut)
+            hintMode: HintModeSettings(enabled: hintMode.enabled, shortcut: shortcut),
+            mouseMode: mouseMode
         )
     }
+    func replacingMouseShortcut(_ shortcut: ShortcutBinding?) -> GeneralSettings {
+        GeneralSettings(launchAtLogin: launchAtLogin, listPresentation: listPresentation,
+                        reverseMouseWheel: reverseMouseWheel, diagnosticLoggingEnabled: diagnosticLoggingEnabled,
+                        hintMode: hintMode, mouseMode: HintModeSettings(enabled: mouseMode.enabled, shortcut: shortcut))
+    }
+
+    func navigationValidationError(against pair: ShortcutPair) -> String? {
+        if let error = mouseMode.validationError(against: pair) { return error.message(for: "Mouse") }
+        if let mouse = mouseMode.shortcut, let hint = hintMode.shortcut,
+           mouse.key?.keyCode == hint.key?.keyCode, mouse.modifiers == hint.modifiers {
+            return "Mouse and Hint shortcuts must be different."
+        }
+        return nil
+    }
+
 }
 
 struct SettingsSnapshot: Codable, Equatable, Sendable {
@@ -125,6 +145,7 @@ struct SettingsSnapshot: Codable, Equatable, Sendable {
             && Set(exceptionRules.map(\.identity)).count == exceptionRules.count
             && general.isValid
             && general.hintMode.validationError(against: shortcuts) == nil
+            && general.navigationValidationError(against: shortcuts) == nil
     }
 }
 

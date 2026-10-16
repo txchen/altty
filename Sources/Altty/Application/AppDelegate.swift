@@ -34,7 +34,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.run(self.environment.engine.receiveSession(event))
         }
         environment.input.install { [weak self] event in self?.receive(event) }
-        environment.hintShortcut.install { [weak self] in self?.environment.hints.toggleSession() }
+        environment.hintShortcut.install { [weak self] in
+            self?.environment.mouse?.endSession()
+            self?.environment.hints.toggleSession()
+        }
+        environment.mouseShortcut?.install { [weak self] in
+            self?.environment.hints.endSession()
+            self?.environment.mouse?.toggleSession()
+        }
+        environment.mouse?.onStart = { [weak self] in
+            self?.environment.engine.receiveMouseShortcutStatus(registered: true)
+            self?.refreshPresentation()
+        }
+        environment.mouse?.onFailure = { [weak self] in
+            self?.environment.engine.receiveMouseShortcutStatus(registered: false)
+            self?.refreshPresentation()
+        }
         environment.mouseScroll.installStatusHandler { [weak self] status in
             guard let self else { return }
             self.environment.engine.receiveMouseScrollStatus(status)
@@ -67,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         environment.input.setShortcutsEnabled(false)
         _ = environment.hintShortcut.setShortcut(nil)
         environment.hints.setShortcut(nil)
+        _ = environment.mouseShortcut?.setShortcut(nil)
+        environment.mouse?.setShortcut(nil)
         environment.mouseScroll.setEnabled(false)
         stopInventoryObservation()
         environment.accessibility.stopMonitoringAvailability()
@@ -152,6 +169,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 receive(.windowServerChanged(environment.windowServer.availability()))
             case let .setShortcutsEnabled(enabled):
                 setShortcutsEnabled(enabled)
+            case let .setMouseShortcut(binding):
+                let registered = environment.mouseShortcut?.setShortcut(binding) ?? false
+                environment.mouse?.setShortcut(registered ? binding : nil)
+                environment.engine.receiveMouseShortcutStatus(registered: registered || binding == nil)
+                refreshPresentation()
             case let .setHintShortcut(binding):
                 let registered = environment.hintShortcut.setShortcut(binding)
                 environment.hints.setShortcut(registered ? binding : nil)
@@ -170,6 +192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case let .recordDiagnostic(event):
                 environment.diagnostics.record(event)
             case .presentSettings:
+                environment.mouse?.endSession()
+                environment.hints.endSession()
                 environment.presentation.presentSettings(state: environment.engine.presentationState)
             case .requestAccessibility:
                 environment.accessibility.requestPermission()
@@ -230,6 +254,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case let .scheduleSwitcherPanel(delayMilliseconds):
                 scheduleSwitcherPanel(delayMilliseconds: delayMilliseconds)
             case let .showSwitcherPanel(state):
+                environment.mouse?.endSession()
+                environment.hints.endSession()
                 let preparationStarted = DispatchTime.now().uptimeNanoseconds
                 environment.presentation.showSwitcherPanel(state: state)
                 environment.diagnostics.recordPerformance(.latency(.panelPreparation,

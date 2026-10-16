@@ -9,7 +9,7 @@ enum HintTapEvent: Equatable, Sendable {
 @MainActor
 protocol HintKeyboardTap: AnyObject {
     /// `onEvent` returns whether to swallow the event; `onFailure` reports a tap
-    /// the system disabled and could not be re-enabled.
+    /// the system disabled. Missed releases make continuing unsafe.
     func start(
         onEvent: @escaping @MainActor (HintTapEvent) -> Bool,
         onFailure: @escaping @MainActor () -> Void
@@ -21,7 +21,7 @@ protocol HintKeyboardTap: AnyObject {
 
 /// An active session tap on the main run loop. The key-up of every swallowed
 /// key-down is swallowed too, as are key repeats; events Altty posted itself
-/// pass untouched.
+/// pass untouched. Normal stop drains owned releases for at most two seconds.
 @MainActor
 final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
     private static let keyEvents: [CGEventType] = [.keyDown, .keyUp, .flagsChanged]
@@ -31,7 +31,8 @@ final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
     private var source: CFRunLoopSource?
     private var onEvent: (@MainActor (HintTapEvent) -> Bool)?
     private var onFailure: (@MainActor () -> Void)?
-    private var swallowedKeyCodes: Set<UInt16> = []
+    private var ledger = NavigationKeyLedger()
+    private var drainTimer: Timer?
 
     var currentFlags: CGEventFlags { CGEventSource.flagsState(.combinedSessionState) }
 
@@ -39,7 +40,11 @@ final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
         onEvent: @escaping @MainActor (HintTapEvent) -> Bool,
         onFailure: @escaping @MainActor () -> Void
     ) -> Bool {
-        stop()
+        drainTimer?.invalidate()
+        drainTimer = nil
+        self.onEvent = onEvent
+        self.onFailure = onFailure
+        if port != nil { return true }
         let mask = (Self.keyEvents + Self.mouseEvents).reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -70,6 +75,23 @@ final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
     }
 
     func stop() {
+        onEvent = nil
+        onFailure = nil
+        guard !ledger.isEmpty else {
+            hardStop()
+            return
+        }
+        drainTimer?.invalidate()
+        let timer = Timer(timeInterval: 2, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hardStop() }
+        }
+        drainTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func hardStop() {
+        drainTimer?.invalidate()
+        drainTimer = nil
         if let port { CGEvent.tapEnable(tap: port, enable: false) }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         if let port { CFMachPortInvalidate(port) }
@@ -77,43 +99,36 @@ final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
         source = nil
         onEvent = nil
         onFailure = nil
-        swallowedKeyCodes.removeAll()
+        ledger = NavigationKeyLedger()
     }
 
     private func receive(_ type: CGEventType, event: CGEvent) -> Bool {
         switch type {
-        case .tapDisabledByTimeout:
-            if let port, CFMachPortIsValid(port) {
-                CGEvent.tapEnable(tap: port, enable: true)
-                if CGEvent.tapIsEnabled(tap: port) { return false }
-            }
-            fail()
-            return false
-        case .tapDisabledByUserInput:
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
             fail()
             return false
         default:
             break
         }
-        guard let onEvent, event.getIntegerValueField(.eventSourceUserData) != HintEventMarker.userData else {
+        guard event.getIntegerValueField(.eventSourceUserData) != HintEventMarker.userData else {
             return false
         }
         switch type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            return onEvent(.mouseDown)
+            return onEvent?(.mouseDown) ?? false
         case .keyUp:
-            let keyCode = Self.keyCode(event)
-            guard swallowedKeyCodes.remove(keyCode) == nil else { return true }
-            return onEvent(.key(Self.raw(.keyUp, event)))
+            let consumed = ledger.release(Self.keyCode(event))
+            _ = onEvent?(.key(Self.raw(.keyUp, event)))
+            if onEvent == nil, ledger.isEmpty { hardStop() }
+            return consumed
         case .keyDown:
-            // A held key never acts twice: a repeated Return would turn one
-            // click into a double click, a held Hint Shortcut would end the session.
-            if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 { return true }
-            let swallow = onEvent(.key(Self.raw(.keyDown, event)))
-            if swallow { swallowedKeyCodes.insert(Self.keyCode(event)) }
-            return swallow
+            return ledger.press(Self.keyCode(event),
+                                isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
+                                active: onEvent != nil) {
+                onEvent?(.key(Self.raw(.keyDown, event))) ?? false
+            }
         case .flagsChanged:
-            return onEvent(.key(Self.raw(.flagsChanged, event)))
+            return onEvent?(.key(Self.raw(.flagsChanged, event))) ?? false
         default:
             return false
         }
@@ -121,7 +136,7 @@ final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
 
     private func fail() {
         let onFailure = onFailure
-        stop()
+        hardStop()
         onFailure?()
     }
 
@@ -143,4 +158,18 @@ final class CoreGraphicsHintKeyboardTap: HintKeyboardTap {
     private static func characters(_ event: CGEvent) -> String {
         NSEvent(cgEvent: event)?.charactersIgnoringModifiers ?? ""
     }
+}
+
+final class NavigationKeyLedger {
+    private var downs: [UInt16: Bool] = [:]
+    var isEmpty: Bool { !downs.values.contains(true) }
+    func press(_ code: UInt16, isRepeat: Bool = false, active: Bool = true, handle: () -> Bool) -> Bool {
+        if let consumed = downs[code] { return consumed }
+        if isRepeat { return active }
+        downs[code] = true
+        let consumed = handle()
+        downs[code] = consumed
+        return consumed
+    }
+    func release(_ code: UInt16) -> Bool { downs.removeValue(forKey: code) ?? false }
 }

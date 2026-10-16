@@ -61,3 +61,23 @@ then performs the Default Action, and modifiers choose other clicks.
 
 AXPress for buttons, menu items and menu bar items, AXRaise for windows, and a
 synthesized left click at the midpoint for everything else.
+
+## Mouse Mode
+
+An optional keyboard control for the pointer. It is off by default and requires
+Accessibility and a recorded Mouse Shortcut. Exception Rule Ignore behavior
+also disables the Mouse Shortcut. Hide behavior does not affect Mouse Mode.
+
+## Mouse Session
+
+One interaction beginning when the Mouse Shortcut is pressed. Held WASD keys
+move the pointer, U selects slow speed, and I selects fast speed. Slow wins
+when both speed keys are held. J and K click once per press. Clicks and changes
+of frontmost application keep the Mouse Session active.
+
+## Mouse Hints
+
+Temporary Hint Labels within a Mouse Session, opened with F. A completed label
+moves the pointer to its Hint Target and returns to stationary Mouse Mode.
+Mouse Hints never perform the target's Default Action. Escape returns to Mouse
+Mode, while the Mouse Shortcut ends the entire Mouse Session.
