@@ -1,14 +1,25 @@
 import AppKit
 
-/// The app icon's tilted card stack as a template, legible in light and dark menu bars.
+/// The app icon's tilted card stack, legible in light and dark menu bars.
 @MainActor enum AlttyIcon {
+    static func menuBar(mouseModeActive: Bool) -> NSImage {
+        render(size: 18, mouseModeActive: mouseModeActive)
+    }
+
     static func window(size: CGFloat = 18) -> NSImage {
+        render(size: size, mouseModeActive: false)
+    }
+
+    private static func render(size: CGFloat, mouseModeActive: Bool) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { bounds in
             NSGraphicsContext.saveGraphicsState()
             defer { NSGraphicsContext.restoreGraphicsState() }
             let scale = NSAffineTransform()
             scale.scale(by: bounds.width / 18)
             scale.concat()
+            let alignment = NSAffineTransform()
+            alignment.translateX(by: 0, yBy: -2)
+            alignment.concat()
             let center = NSPoint(x: 9, y: 9)
             let cardRect = NSRect(x: 2.5, y: 4.5, width: 13, height: 9.5)
 
@@ -22,8 +33,8 @@ import AppKit
                 return path
             }
 
-            NSColor.labelColor.setFill()
-            NSColor.labelColor.setStroke()
+            NSColor.black.setFill()
+            (mouseModeActive ? NSColor.labelColor.withAlphaComponent(1) : NSColor.black).setStroke()
             for (degrees, lift): (CGFloat, CGFloat) in [(18, 2.2), (6, 1.1)] {
                 let rear = card(rotatedBy: degrees, lift: lift)
                 rear.lineWidth = 1.1
@@ -37,6 +48,7 @@ import AppKit
             front.lineWidth = 1.6
             front.stroke()
             NSGraphicsContext.current?.compositingOperation = .sourceOver
+            (mouseModeActive ? NSColor.systemBlue : NSColor.black).setFill()
             front.fill()
             NSGraphicsContext.current?.compositingOperation = .clear
             let transform = NSAffineTransform()
@@ -50,7 +62,7 @@ import AppKit
             }
             return true
         }
-        image.isTemplate = true
+        image.isTemplate = !mouseModeActive
         image.accessibilityDescription = "Altty"
         return image
     }

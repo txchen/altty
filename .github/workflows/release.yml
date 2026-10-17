@@ -90,7 +90,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$VERSION" --verify-tag --title "Altty $VERSION" --notes-file docs/release-notes.md \
+          gh release create "$VERSION" --verify-tag --title "Altty $VERSION" --notes-file Docs/release-notes.md \
             ".build/artifacts/$ARTIFACT" .build/artifacts/checksums.txt .build/artifacts/release-metadata.json
       - name: Preserve package and notarization receipt for diagnosis or resuming
         if: always()

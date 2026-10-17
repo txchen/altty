@@ -42,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.environment.hints.endSession()
             self?.environment.mouse?.toggleSession()
         }
+        environment.mouse?.onActivityChanged = { [weak self] active in
+            self?.environment.presentation.setMouseModeActive(active)
+        }
         environment.mouse?.onStart = { [weak self] in
             self?.environment.engine.receiveMouseShortcutStatus(registered: true)
             self?.refreshPresentation()

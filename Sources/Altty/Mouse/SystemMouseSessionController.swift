@@ -40,7 +40,6 @@ final class SystemMouseSessionController {
     private let tap: any HintKeyboardTap
     private let pointer: any MousePointer
     private let workspace: any HintWorkspace
-    private let hud: any MouseHUD
     private let clock: any HintClock
     private var timer: Timer?
     private var observers: [(NotificationCenter, any NSObjectProtocol)] = []
@@ -55,6 +54,7 @@ final class SystemMouseSessionController {
     private var lastPostedPosition: CGPoint?
     private var ignoresTogglesUntil = -TimeInterval.infinity
     private(set) var phase: Phase?
+    var onActivityChanged: (@MainActor (Bool) -> Void)?
     var onStart: (@MainActor () -> Void)?
     var onFailure: (@MainActor () -> Void)?
     var isActive: Bool { phase != nil }
@@ -62,7 +62,7 @@ final class SystemMouseSessionController {
     init(
         scanner: any HintScanner = AXHintScanner(), overlay: any HintOverlay = PanelHintOverlay(),
         tap: any HintKeyboardTap = CoreGraphicsHintKeyboardTap(), pointer: any MousePointer = SystemMousePointer(),
-        workspace: any HintWorkspace = SystemHintWorkspace(), hud: any MouseHUD = PanelMouseHUD(),
+        workspace: any HintWorkspace = SystemHintWorkspace(),
         clock: any HintClock = SystemHintClock()
     ) {
         self.scanner = scanner
@@ -70,7 +70,6 @@ final class SystemMouseSessionController {
         self.tap = tap
         self.pointer = pointer
         self.workspace = workspace
-        self.hud = hud
         self.clock = clock
     }
     func setShortcut(_ binding: ShortcutBinding?) {
@@ -98,6 +97,7 @@ final class SystemMouseSessionController {
             fail()
             return
         }
+        onActivityChanged?(true)
         onStart?()
         lastTick = clock.now
         let timer = Timer(timeInterval: 1 / 120, repeats: true) { [weak self] _ in
@@ -112,12 +112,12 @@ final class SystemMouseSessionController {
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.willSleepNotification)
         observe(NSWorkspace.shared.notificationCenter, NSWorkspace.sessionDidResignActiveNotification)
         observe(DistributedNotificationCenter.default(), Notification.Name("com.apple.screenIsLocked"))
-        redrawHUD()
     }
     func endSession() {
         guard isActive else { return }
         generation &+= 1
         phase = nil
+        onActivityChanged?(false)
         movement = MouseMovement()
         position = nil
         lastPostedPosition = nil
@@ -125,7 +125,6 @@ final class SystemMouseSessionController {
         timer = nil
         targets = []
         overlay.hide()
-        hud.hide()
         workspace.stopObservingActivations()
         for (center, observer) in observers { center.removeObserver(observer) }
         observers = []
@@ -172,7 +171,6 @@ final class SystemMouseSessionController {
         position = next
         pointer.move(to: next)
         lastPostedPosition = next
-        redrawHUD()
     }
     private func receive(_ event: HintTapEvent) -> Bool {
         guard isActive else { return false }
@@ -183,7 +181,6 @@ final class SystemMouseSessionController {
         guard case .key(let raw) = event else { return false }
         if raw.kind == .keyUp {
             movement.held.remove(raw.keyCode)
-            redrawHUD()
             return false
         }
         guard raw.kind == .keyDown else { return false }
@@ -205,7 +202,6 @@ final class SystemMouseSessionController {
         case .movement:
             if MouseMovement.controls.contains(raw.keyCode) {
                 movement.held.insert(raw.keyCode)
-                redrawHUD()
             } else if raw.keyCode == MouseKey.leftClick {
                 pointer.click(.left)
             } else if raw.keyCode == MouseKey.rightClick {
@@ -234,7 +230,6 @@ final class SystemMouseSessionController {
         }
         scanPID = pid
         phase = .scanning([])
-        redrawHUD()
         scanner.scan(pid: pid) { [weak self] result in
             guard let self, token == self.generation, case .scanning(let buffer) = self.phase else { return }
             self.targets = Array(result.targets.prefix(HintLabels.capacity()))
@@ -249,7 +244,6 @@ final class SystemMouseSessionController {
                 self.pick(key)
             }
             self.redrawPicker()
-            self.redrawHUD()
         }
     }
     private func pick(_ key: HintKey) {
@@ -271,7 +265,6 @@ final class SystemMouseSessionController {
         targets = []
         phase = .movement
         overlay.hide()
-        redrawHUD()
     }
     private func redrawPicker() {
         guard case .picking(let picker) = phase else { return }
@@ -281,15 +274,5 @@ final class SystemMouseSessionController {
                     label: badge.label, typedCount: badge.typedCount,
                     frame: targets[badge.target].frame, isSelected: false)
             })
-    }
-    private func redrawHUD() {
-        let state: MouseHUDState
-        switch phase {
-        case .movement: state = .movement(movement.speed)
-        case .scanning: state = .scanning
-        case .picking: state = .picking
-        case nil: return
-        }
-        hud.show(state: state, shortcut: shortcut?.displayName ?? "Shortcut")
     }
 }

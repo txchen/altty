@@ -67,12 +67,13 @@ struct NavigationKeyLedgerTests {
 }
 
 @MainActor private final class MouseTestTap: HintKeyboardTap {
+    var startsSuccessfully = true
     var currentFlags: CGEventFlags = []
     var handler: (@MainActor (HintTapEvent) -> Bool)?
     var failure: (@MainActor () -> Void)?
     let ledger = NavigationKeyLedger()
     func start(onEvent: @escaping @MainActor (HintTapEvent) -> Bool, onFailure: @escaping @MainActor () -> Void) -> Bool {
-        handler = onEvent; failure = onFailure; return true
+        handler = onEvent; failure = onFailure; return startsSuccessfully
     }
     func stop() { handler = nil; failure = nil }
     @discardableResult func down(_ code: UInt16, text: String = "", flags: CGEventFlags = [], repeatKey: Bool = false) -> Bool {
@@ -97,11 +98,6 @@ struct NavigationKeyLedgerTests {
     func move(to point: CGPoint) { position = point; moves.append(point) }
     func click(_ button: CGMouseButton) { clicks.append(button) }
 }
-@MainActor private final class MouseTestHUD: MouseHUD {
-    var status: String?
-    func show(state: MouseHUDState, shortcut: String) { self.status = state.title }
-    func hide() { status = nil }
-}
 @MainActor private final class MouseTestWorkspace: HintWorkspace {
     var frontmostPID: pid_t? = 42
     var doubleClickInterval: TimeInterval = 0.5
@@ -120,18 +116,23 @@ struct NavigationKeyLedgerTests {
     func show(_ items: [HintOverlayItem]) { self.items = items }
     func hide() { items = [] }
 }
+@MainActor private final class MouseActivity {
+    var changes: [Bool] = []
+}
 @MainActor private struct MouseHarness {
+    let activity = MouseActivity()
     let tap = MouseTestTap()
     let scanner = MouseTestScanner()
     let pointer = MouseTestPointer()
-    let hud = MouseTestHUD()
     let workspace = MouseTestWorkspace()
     let clock = MouseTestClock()
     let overlay = MouseTestOverlay()
     let controller: SystemMouseSessionController
-    init() {
+    init(startsSuccessfully: Bool = true) {
+        tap.startsSuccessfully = startsSuccessfully
         controller = SystemMouseSessionController(scanner: scanner, overlay: overlay, tap: tap, pointer: pointer,
-                                                  workspace: workspace, hud: hud, clock: clock)
+                                                  workspace: workspace, clock: clock)
+        controller.onActivityChanged = { [activity] in activity.changes.append($0) }
         controller.setShortcut(ShortcutBinding(key: ShortcutKey(keyCode: 46, displayName: "M"), modifiers: [.option]))
         controller.toggleSession()
     }
@@ -142,6 +143,28 @@ struct NavigationKeyLedgerTests {
     }
 }
 @MainActor struct MouseSessionControllerTests {
+    @Test func failedStartNeverAnnouncesActive() {
+        let h = MouseHarness(startsSuccessfully: false)
+        #expect(!h.controller.isActive)
+        #expect(!h.activity.changes.contains(true))
+    }
+    @Test func nestedHintsKeepActivityUntilFinalEscape() {
+        let h = MouseHarness()
+        #expect(h.activity.changes == [true])
+        h.tap.down(3)
+        #expect(h.activity.changes == [true])
+        h.scanner.completions[0](HintScanResult(targets: [h.target()], sawWebArea: false, visits: 1))
+        #expect(h.activity.changes == [true])
+        h.tap.down(53)
+        #expect(h.controller.isActive)
+        #expect(h.activity.changes == [true])
+        h.tap.up(53)
+        h.tap.down(53)
+        #expect(h.activity.changes == [true, false])
+        h.controller.endSession()
+        #expect(h.activity.changes == [true, false])
+    }
+
     @Test func heldMotionStopsOnReleaseAndClicksOncePerPress() {
         let h = MouseHarness(); defer { h.controller.endSession() }
         h.tap.down(13); h.tick()
@@ -179,6 +202,7 @@ struct NavigationKeyLedgerTests {
         #expect(h.controller.isActive)
         h.tap.up(53); h.tap.down(53)
         #expect(!h.controller.isActive)
+        #expect(h.activity.changes.last == false)
     }
     @Test func focusAndPhysicalClicksPersistButForeignChordExits() {
         let h = MouseHarness(); defer { h.controller.endSession() }
@@ -187,25 +211,23 @@ struct NavigationKeyLedgerTests {
         #expect(h.controller.isActive)
         h.tap.down(13); #expect(!h.tap.down(8, flags: .maskCommand))
         h.tick(); #expect(!h.controller.isActive)
+        #expect(h.activity.changes.last == false)
         #expect(h.pointer.moves.isEmpty)
-        #expect(h.hud.status == nil)
     }
     @Test func securityFailureAndQueuedTicksCannotRetainMotion() {
         let h = MouseHarness()
         h.tap.down(13); h.workspace.isSecureInputEnabled = true; h.tick()
         #expect(!h.controller.isActive)
+        #expect(h.activity.changes.last == false)
         #expect(h.pointer.moves.isEmpty)
         h.workspace.isSecureInputEnabled = false; h.controller.toggleSession()
         h.tap.up(13); h.tap.down(13); h.tap.failure?(); h.tick()
         #expect(!h.controller.isActive)
+        #expect(h.activity.changes.last == false)
         #expect(h.pointer.moves.isEmpty)
     }
-    @Test func speedHUDAndStallClampRestoreNormalAfterRelease() {
+    @Test func stallClampLimitsMovementAfterDelay() {
         let h = MouseHarness(); defer { h.controller.endSession() }
-        h.tap.down(34); #expect(h.hud.status == "Fast")
-        h.tap.down(32); #expect(h.hud.status == "Slow")
-        h.tap.up(32); #expect(h.hud.status == "Fast")
-        h.tap.up(34); #expect(h.hud.status == "Normal")
         h.tap.down(2); h.tick(10)
         #expect(abs(h.pointer.position.x - 130) < 0.001)
     }
@@ -213,13 +235,16 @@ struct NavigationKeyLedgerTests {
         let h = MouseHarness()
         #expect(!h.tap.down(UInt16(kVK_Return), flags: .maskCommand))
         #expect(!h.controller.isActive)
+        #expect(h.activity.changes.last == false)
         h.tap.up(UInt16(kVK_Return))
         h.controller.setShortcut(ShortcutBinding(key: ShortcutKey(keyCode: UInt32(kVK_Return), displayName: "Return"), modifiers: [.command]))
         h.controller.toggleSession()
         #expect(h.tap.down(UInt16(kVK_Return), flags: .maskCommand))
         #expect(!h.controller.isActive)
+        #expect(h.activity.changes.last == false)
         h.controller.toggleSession()
         #expect(!h.controller.isActive)
+        #expect(h.activity.changes.last == false)
     }
     @Test func samePIDActivationKeepsScanAndChangedShortcutEndsSession() {
         let h = MouseHarness()
@@ -229,7 +254,7 @@ struct NavigationKeyLedgerTests {
         #expect(h.overlay.items.count == 1)
         h.controller.setShortcut(ShortcutBinding(key: ShortcutKey(keyCode: 4, displayName: "H"), modifiers: [.option]))
         #expect(!h.controller.isActive)
-        #expect(h.hud.status == nil)
+        #expect(h.activity.changes.last == false)
     }
     @Test func sleepEndsStationaryOrMovingSessionsAndFractionalMotionSurvivesTicks() {
         let h = MouseHarness()
@@ -241,7 +266,7 @@ struct NavigationKeyLedgerTests {
         #expect(h.pointer.position.x < 101)
         NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
         #expect(!h.controller.isActive)
-        #expect(h.hud.status == nil)
+        #expect(h.activity.changes.last == false)
         let count = h.pointer.moves.count
         h.tick()
         #expect(h.pointer.moves.count == count)
@@ -250,6 +275,7 @@ struct NavigationKeyLedgerTests {
         let h = MouseHarness()
         h.tap.down(3); h.tap.down(46, flags: .maskAlternate)
         #expect(!h.controller.isActive)
+        #expect(h.activity.changes.last == false)
         h.controller.toggleSession(); #expect(!h.controller.isActive)
         h.clock.now += 0.4; h.controller.toggleSession(); #expect(h.controller.isActive)
         h.controller.setShortcut(nil); #expect(!h.controller.isActive)

@@ -4,6 +4,7 @@ import AppKit
 protocol PresentationAdapter: AnyObject {
     func install(onCommand: @escaping (SwitcherCommand) -> Void)
     func installSwitcherInteractions(onInteraction: @escaping (SwitcherSessionEvent) -> Void)
+    func setMouseModeActive(_ active: Bool)
     func update(state: SwitcherPresentationState)
     func presentSettings(state: SwitcherPresentationState)
     func showSwitcherPanel(state: SwitcherPanelState)
@@ -46,6 +47,8 @@ final class AppKitPresentationAdapter: PresentationAdapter {
         menuBar.update(state: state)
         settings.update(state: state)
     }
+
+    func setMouseModeActive(_ active: Bool) { menuBar.setMouseModeActive(active) }
 
     func presentSettings(state: SwitcherPresentationState) { settings.show(state: state) }
 

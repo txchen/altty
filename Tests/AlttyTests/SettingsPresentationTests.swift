@@ -419,6 +419,22 @@ struct SettingsPresentationTests {
         #expect(commands.last == .replaceGeneralSettings(original))
     }
 
+    @Test func mouseIndicatorSurvivesInstallationAndUnrelatedUpdates() {
+        _ = NSApplication.shared
+        let menu = MenuBarController { _ in }
+        menu.setMouseModeActive(true)
+        menu.install()
+        defer { menu.uninstall() }
+        #expect(menu.observedState.mouseModeActive)
+        #expect(menu.observedState.indicatorTooltip?.contains("Mouse Mode") == true)
+        menu.update(state: SwitcherPresentationState(hasLaunched: true, accessibility: .unavailable, windowServer: .available))
+        #expect(menu.observedState.mouseModeActive)
+        #expect(menu.observedState.indicatorTooltip?.contains("Mouse Mode") == true)
+        menu.setMouseModeActive(false)
+        #expect(!menu.observedState.mouseModeActive)
+        #expect(menu.observedState.indicatorTooltip == "Altty")
+    }
+
     @Test func menuBarShowsStatusAndOnlyProductionLevelActions() {
         _ = NSApplication.shared
         let menu = MenuBarController { _ in }

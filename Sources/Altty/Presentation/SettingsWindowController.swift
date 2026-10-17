@@ -349,7 +349,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
             hintModeMessageLabel.textColor = .secondaryLabelColor
             hintModeMessageLabel.font = .systemFont(ofSize: 12)
             stack.addArrangedSubview(card("Hints", views: [hintModeCheckbox, hintDetail, hintModeMessageLabel]))
-            let mouseModeDetail = NSTextField(wrappingLabelWithString: "Hold WASD to move the pointer. U slows down, I speeds up. J clicks left, K clicks right. F shows hints to move to a target. Esc goes back or exits.")
+            let mouseModeDetail = NSTextField(wrappingLabelWithString: "Press your recorded shortcut to toggle Mouse Mode. The blue Altty icon in the menu bar shows when it is active. Hold WASD to move the pointer. U slows down, I speeds up. J clicks left, K clicks right. F shows hints to move to a target. Esc in hints returns to movement. Esc in movement exits.")
             mouseModeDetail.font = .systemFont(ofSize: 12)
             mouseModeDetail.textColor = .secondaryLabelColor
             mouseModeMessageLabel.font = .systemFont(ofSize: 12)

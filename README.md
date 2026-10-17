@@ -1,7 +1,7 @@
 # Altty
 
-A lightweight window switcher for macOS. Move between windows, click with your
-keyboard, and control mouse scrolling from a native menu bar app.
+A lightweight window switcher for macOS. Switch windows, move and click the
+pointer with your keyboard, and control mouse scrolling from a native menu bar app.
 
 **Apple Silicon · macOS 15 or later**
 
@@ -23,6 +23,9 @@ keyboard, and control mouse scrolling from a native menu bar app.
   defaults for fullscreen use.
 - **Click with your keyboard.** Optional keyboard hints label clickable elements
   in the frontmost app. Type a label to select an element, then press Return.
+- **Control the pointer.** Toggle Mouse Mode to move with **WASD**, hold **U** to
+  slow down or **I** to speed up, and click with **J / K**. Press **F** to jump to
+  a hint target. Altty's menu bar icon turns blue while Mouse Mode is active.
 - **Reverse only your mouse wheel.** Keep your trackpad's scrolling direction
   while reversing mouse scrolling.
 
@@ -49,16 +52,35 @@ Grant **Accessibility** access when Altty asks, then try **⌥ Tab**. If macOS a
 you to restart Altty after granting permission, quit and reopen it.
 
 Open Settings from the menu bar to change shortcuts and exceptions. Keyboard
-hints and mouse wheel reversal are off by default. Mouse wheel reversal also
+hints, Mouse Mode, and mouse wheel reversal are off by default. Mouse wheel
+reversal also
 requires **Input Monitoring** permission. Quit other mouse scroll reversal apps
 before enabling it.
 
-See the [usage guide](Docs/usage.md) for keyboard hint controls, permissions, and
+See the [usage guide](Docs/usage.md) for keyboard controls, permissions, and
 app compatibility notes.
 
 <p align="center">
   <img src="Docs/images/settings.png" alt="Altty settings for window list size, mouse wheel reversal, keyboard hints, and permissions" width="680">
 </p>
+
+## Mouse Mode
+
+Enable **Mouse Mode** in Settings → General, then record **Toggle Mouse Mode**
+in Settings → Shortcuts. Press that shortcut to enter or exit the mode.
+
+| Key | Action |
+| --- | --- |
+| Hold W / A / S / D | Move up / left / down / right |
+| Hold U / I | Slow down / speed up |
+| J / K | Left click / right click |
+| F, then a hint label | Move to a clickable element without clicking |
+| Esc | Return from hints, or exit Mouse Mode |
+
+The front card of Altty's menu bar icon turns blue while the mode is active.
+Clicks keep the mode active; movement stops when you release the keys. No
+floating instruction panel covers your windows. Dragging and keyboard scrolling
+are not included in this version.
 
 ## Update or uninstall
 

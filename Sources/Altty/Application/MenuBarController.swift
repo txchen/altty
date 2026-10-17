@@ -5,6 +5,8 @@ struct MenuBarObservedState: Equatable {
     let statusTitles: [String]
     let actionTitles: [String]
     let showsAccessibilityAction: Bool
+    var indicatorTooltip: String? = nil
+    var mouseModeActive: Bool = false
     var mouseScrollReversed: Bool = false
 }
 
@@ -17,13 +19,12 @@ final class MenuBarController: NSObject {
     private let mouseScrollItem = NSMenuItem(title: "Reverse Mouse Scrolling", action: #selector(toggleMouseScroll), keyEquivalent: "")
     private var generalSettings = GeneralSettings.defaults
     private var menu: NSMenu?
+    private var mouseModeActive = false
 
     init(onCommand: @escaping (SwitcherCommand) -> Void) { self.onCommand = onCommand }
 
     func install() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = AlttyIcon.window()
-        item.button?.image?.isTemplate = true
+        let item = NSStatusBar.system.statusItem(withLength: 16)
         let menu = NSMenu()
         readinessItem.isEnabled = false
         menu.addItem(readinessItem)
@@ -37,6 +38,7 @@ final class MenuBarController: NSObject {
         item.menu = menu
         self.menu = menu
         statusItem = item
+        updateIndicator()
     }
 
     var observedState: MenuBarObservedState {
@@ -48,8 +50,23 @@ final class MenuBarController: NSObject {
                 return item.title
             } ?? [],
             showsAccessibilityAction: !accessibilityActionItem.isHidden,
+            indicatorTooltip: statusItem?.button?.toolTip,
+            mouseModeActive: mouseModeActive,
             mouseScrollReversed: mouseScrollItem.state == .on
         )
+    }
+
+    func setMouseModeActive(_ active: Bool) {
+        mouseModeActive = active
+        updateIndicator()
+    }
+
+    private func updateIndicator() {
+        statusItem?.button?.image = AlttyIcon.menuBar(mouseModeActive: mouseModeActive)
+        statusItem?.button?.toolTip = mouseModeActive
+            ? "Altty — Mouse Mode. Mouse shortcut exits; Esc goes back or exits."
+            : "Altty"
+        statusItem?.button?.setAccessibilityLabel(mouseModeActive ? "Altty — Mouse Mode" : "Altty")
     }
 
     func uninstall() {

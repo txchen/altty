@@ -80,8 +80,7 @@ settings file cannot be loaded; the original invalid file is preserved for diagn
 Turn on **Enable Mouse Mode** in Settings → General. In Settings → Shortcuts,
 record **Toggle Mouse Mode**. Mouse Mode needs Accessibility permission.
 
-Press your recorded shortcut, then use these keys. The HUD stays visible while
-Mouse Mode is active.
+Press your recorded shortcut, then use these keys. The Altty icon in the menu bar turns blue while Mouse Mode is active, including inside hints. Press the shortcut again to exit.
 
 | Key | Action |
 |---|---|

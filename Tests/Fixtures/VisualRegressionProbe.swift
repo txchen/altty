@@ -24,14 +24,12 @@ import AppKit
         for theme in ["light", "dark"] {
             let appearance = NSAppearance(named: theme == "light" ? .aqua : .darkAqua)!
             if includesMouse {
-                for state: MouseHUDState in [.movement(.slow), .movement(.normal), .movement(.fast), .scanning, .picking] {
-                    let hud = MouseHUDView(state: state, shortcut: "⌥M")
-                    let window = NSPanel(contentRect: hud.bounds, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-                    window.contentView = hud
-                    window.orderFrontRegardless()
-                    try await capture(hud, appearance: appearance,
-                                      name: "mouse-\(state.title.replacingOccurrences(of: " ", with: "-"))-\(theme)", output: output)
-                    window.orderOut(nil)
+                for active in [false, true] {
+                    let icon = NSImageView(frame: NSRect(x: 0, y: 0, width: 16, height: 24))
+                    icon.image = AlttyIcon.menuBar(mouseModeActive: active)
+                    icon.contentTintColor = theme == "light" ? .black : .white
+                    try await capture(icon, appearance: appearance,
+                                      name: "mouse-icon-\(active ? "active" : "normal")-\(theme)", output: output)
                 }
             }
             let panel = SwitcherPanelController(displayProvider: FixedDisplays())
@@ -105,7 +103,7 @@ import AppKit
                 table.selectionHighlightStyle = .none
             }
             if let image = child as? NSImageView,
-               !["settings", "exceptions", "shortcuts", "about", "permissions"].contains(where: { name.hasPrefix($0) }) {
+               !["settings", "exceptions", "shortcuts", "about", "permissions", "mouse-icon"].contains(where: { name.hasPrefix($0) }) {
                 image.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "Fixture")
             }
         }

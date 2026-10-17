@@ -125,6 +125,7 @@ private final class FocusSmokeWorkspaceAdapter: WorkspaceAdapter {
 
 @MainActor
 private final class FocusSmokePresentationAdapter: PresentationAdapter {
+    func setMouseModeActive(_ active: Bool) {}
     func install(onCommand _: @escaping (SwitcherCommand) -> Void) {}
     func installSwitcherInteractions(onInteraction _: @escaping (SwitcherSessionEvent) -> Void) {}
     func update(state _: SwitcherPresentationState) {}
