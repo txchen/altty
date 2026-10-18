@@ -381,6 +381,7 @@ final class SwitcherEngine {
         if let session = activeSwitchSession,
            session.phase == .waitingForModifierRelease,
            eventLosesInteractionContext(event, session: session) {
+            ShortcutDiagnostics.record("lost_context transaction=\(session.transactionID) event=\(Self.diagnosticDescription(event))")
             effects.append(contentsOf: endSessionEffects())
             return effects
         }
@@ -472,11 +473,17 @@ final class SwitcherEngine {
         mode: SwitcherMode,
         direction: SwitchDirection
     ) async -> [SwitcherEffect] {
-        guard activeSpaceIsCurrent, activeSwitchSession == nil else { return [] }
+        guard activeSpaceIsCurrent, activeSwitchSession == nil else {
+            ShortcutDiagnostics.record("begin_skipped spaceCurrent=\(activeSpaceIsCurrent) sessionActive=\(activeSwitchSession != nil)")
+            return []
+        }
         let revision = activeSpaceRevision
         let snapshot = await inventory.snapshot()
         guard activeSpaceIsCurrent, revision == activeSpaceRevision,
-              activeSwitchSession == nil else { return [] }
+              activeSwitchSession == nil else {
+            ShortcutDiagnostics.record("begin_skipped_after_snapshot spaceCurrent=\(activeSpaceIsCurrent) sessionActive=\(activeSwitchSession != nil)")
+            return []
+        }
         let invocationPID = snapshot.frontmostApplicationPID
             ?? snapshot.focusedWindow?.pid
         let visibleWindows = snapshot.windows.filter { window in
@@ -488,13 +495,22 @@ final class SwitcherEngine {
         case .currentApp:
             visibleWindows.filter { $0.pid == invocationPID }
         }
+        let origin = snapshot.focusedWindow
+        ShortcutDiagnostics.record("begin mode=\(mode) origin=\(origin.map { "\($0.wid)/\($0.pid)" } ?? "nil") originIsCandidate=\(candidates.contains { $0.identity == origin }) frontmostPID=\(snapshot.frontmostApplicationPID.map(String.init) ?? "nil") candidates=\(candidates.prefix(6).map { "\($0.wid)/\($0.pid)" })")
         guard !candidates.isEmpty else { return [] }
 
-        let origin = snapshot.focusedWindow
+        // The focused WID can be a non-candidate surface: Chromium's find bar, or a
+        // menu bar utility's overlay (MonitorControl) of another process. Then the
+        // frontmost application's most recent real window is the current window.
+        let currentIndex = candidates.firstIndex { $0.identity == origin }
+            ?? invocationPID.flatMap { pid in
+                candidates.firstIndex { $0.pid == pid }
+            }
+        // A sole candidate still takes focus back from an auxiliary surface.
         if candidates.count == 1, candidates[0].identity == origin { return [] }
 
         let selectedIndex: Int
-        if let origin, let currentIndex = candidates.firstIndex(where: { $0.identity == origin }) {
+        if let currentIndex {
             switch direction {
             case .forward:
                 selectedIndex = (currentIndex + 1) % candidates.count
@@ -609,6 +625,7 @@ final class SwitcherEngine {
             return [.verifyFocus(identity)]
         case let .focusPostconditionObserved(observed):
             guard session.phase == .verifying else { return [] }
+            ShortcutDiagnostics.record("verify transaction=\(session.transactionID) target=\(session.target.wid)/\(session.target.pid) observed=\(observed.map { "\($0.wid)/\($0.pid)" } ?? "nil")")
             guard observed == FocusedWindow(
                 wid: session.target.wid,
                 pid: session.target.pid
@@ -651,6 +668,14 @@ final class SwitcherEngine {
              .workspaceChanged(.snapshot), .workspaceChanged(.launched),
              .workspaceChanged(.hidden), .workspaceChanged(.activated):
             false
+        }
+    }
+
+    private static func diagnosticDescription(_ event: InventoryEvent) -> String {
+        switch event {
+        case let .focused(identity): "focused \(identity.wid)/\(identity.pid)"
+        case let .workspaceChanged(.activated(pid)): "activated \(pid)"
+        default: "other"
         }
     }
 

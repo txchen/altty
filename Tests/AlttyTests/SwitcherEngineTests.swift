@@ -721,6 +721,43 @@ struct AllWindowsSwitcherSessionTests {
         #expect(engine.activeSwitchSession?.target.identity == identities[2])
     }
 
+    @Test func focusedAuxiliarySurfaceResolvesToItsOwnersCurrentWindow() async {
+        let (engine, identities) = await makeInteractiveEngine()
+        // A Chromium find bar: live and focused, but never a switch candidate.
+        let findBar = WindowIdentity(wid: 11, pid: 100, generation: 1)
+        _ = await engine.receiveInventory(.created(
+            WindowServerWindow(wid: 11, pid: 100, frontToBackOrder: 0, parentWID: 10),
+            generation: 1
+        ))
+        _ = await engine.receiveInventory(.focused(findBar))
+        #expect(await engine.inventorySnapshot().focusedWindow == findBar)
+
+        _ = await engine.beginAllWindowsSwitch()
+        #expect(engine.activeSwitchSession?.origin == findBar)
+        #expect(engine.activeSwitchSession?.target.identity == identities[1])
+        _ = engine.receiveSession(.cancel(.escape))
+
+        _ = await engine.beginAllWindowsSwitch(direction: .backward)
+        #expect(engine.activeSwitchSession?.target.identity == identities[2])
+    }
+
+    @Test func focusedOverlayOfAnotherProcessResolvesToTheFrontmostApplicationsWindow() async {
+        let (engine, identities) = await makeInteractiveEngine()
+        // A menu bar utility's level-1000 overlay reports SkyLight focus while app 100 stays frontmost.
+        let overlay = WindowIdentity(wid: 32, pid: 635, generation: 1)
+        _ = await engine.receiveInventory(.created(
+            WindowServerWindow(wid: 32, pid: 635, frontToBackOrder: 0, level: 1000),
+            generation: 1
+        ))
+        _ = await engine.receiveInventory(.focused(overlay))
+        _ = await engine.receiveInventory(.workspaceChanged(.activated(pid: 100)))
+        #expect(await engine.inventorySnapshot().focusedWindow == overlay)
+        #expect(await engine.inventorySnapshot().frontmostApplicationPID == 100)
+
+        _ = await engine.beginAllWindowsSwitch()
+        #expect(engine.activeSwitchSession?.target.identity == identities[1])
+    }
+
     @Test func reverseInvocationSelectsThePreviousWindowAndWraps() async {
         let (engine, identities) = await makeInteractiveEngine()
 
