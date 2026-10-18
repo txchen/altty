@@ -317,6 +317,7 @@ private struct SkyLightQuery: Sendable {
     private typealias IteratorAdvance = @convention(c) (CFTypeRef) -> Bool
     private typealias IteratorGetWindowID = @convention(c) (CFTypeRef) -> WindowID
     private typealias IteratorGetPID = @convention(c) (CFTypeRef) -> ProcessID
+    private typealias IteratorGetParentID = @convention(c) (CFTypeRef) -> WindowID
 
     fileprivate static let frameworkPath = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
     private static let includeInvisibleWindows = 0b111
@@ -357,6 +358,8 @@ private struct SkyLightQuery: Sendable {
               let iteratorGetPID: IteratorGetPID = loadDynamicSymbol(handle, "SLSWindowIteratorGetPID") else {
             return nil
         }
+        // Optional: without it, child-window filtering falls back to AX parent facts.
+        let iteratorGetParentID: IteratorGetParentID? = loadDynamicSymbol(handle, "SLSWindowIteratorGetParentID")
 
         let connection = mainConnection()
         guard let displays = copyManagedDisplaySpaces(connection)?.takeRetainedValue() else { return nil }
@@ -394,8 +397,11 @@ private struct SkyLightQuery: Sendable {
         }
 
         var pidsByWID: [WindowID: ProcessID] = [:]
+        var parentsByWID: [WindowID: WindowID] = [:]
         while iteratorAdvance(iterator) {
-            pidsByWID[iteratorGetWindowID(iterator)] = iteratorGetPID(iterator)
+            let wid = iteratorGetWindowID(iterator)
+            pidsByWID[wid] = iteratorGetPID(iterator)
+            if let iteratorGetParentID { parentsByWID[wid] = iteratorGetParentID(iterator) }
         }
         // Read only geometry/level; never retain titles or capture window contents.
         let metadata = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? [])
@@ -408,7 +414,8 @@ private struct SkyLightQuery: Sendable {
             let entry = metadataByWID[wid]
             let frame = (entry?[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
             return WindowServerWindow(wid: wid, pid: pid, frontToBackOrder: order,
-                level: (entry?[kCGWindowLayer as String] as? NSNumber)?.intValue, frame: frame)
+                level: (entry?[kCGWindowLayer as String] as? NSNumber)?.intValue, frame: frame,
+                parentWID: parentsByWID[wid])
         }
         return WindowServerSnapshot(activeSpaceIDs: activeSpaceIDs, windows: windows)
     }

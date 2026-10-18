@@ -21,6 +21,8 @@ struct WindowServerWindow: Equatable, Sendable {
     let frontToBackOrder: Int
     var level: Int? = nil
     var frame: CGRect? = nil
+    // WindowServer parent; nonzero for AppKit child windows such as Chromium's find bar.
+    var parentWID: WindowID? = nil
 }
 
 struct WindowServerSnapshot: Equatable, Sendable {
@@ -51,6 +53,10 @@ enum WindowQualification {
     ) -> Bool {
         guard !isTransient(role: role, subrole: subrole) else { return false }
         if let parent, parent != 0, parent != identity.wid { return false }
+        // AX may present a child window as a top-level AXWindow; the WindowServer does not.
+        if let serverParent = server?.parentWID, serverParent != 0, serverParent != identity.wid {
+            return false
+        }
         if let frame = server?.frame, frame.width <= 0 || frame.height <= 0 { return false }
         // Floating documents/slideshows can be genuine targets; non-main utility
         // surfaces at elevated levels are not. Unknown AXMain fails closed there.

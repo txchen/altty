@@ -26,4 +26,19 @@ extension WindowCompatibilityTests {
         #expect(!accepts(0, main: true, subrole: "AXStandardWindow", parent: 99)) // child overlay
         #expect(accepts(3, main: false, subrole: "AXStandardWindow", fullscreen: true))
     }
+
+    @Test func windowServerChildWindowsAreNotSwitchTargets() {
+        // Chromium's find bar: a level-0 child of the browser window that AX lists as top-level.
+        let identity = WindowIdentity(wid: 2996, pid: 100, generation: 1)
+        func accepts(serverParent: WindowID?) -> Bool {
+            WindowQualification.accepts(identity: identity,
+                server: .init(wid: 2996, pid: 100, frontToBackOrder: 0, level: 0,
+                              frame: .init(x: 1142, y: 187, width: 269, height: 43),
+                              parentWID: serverParent),
+                role: "AXWindow", subrole: "AXUnknown", isMain: false, isFullscreen: false, parent: 0)
+        }
+        #expect(!accepts(serverParent: 2993))
+        #expect(accepts(serverParent: 0))
+        #expect(accepts(serverParent: nil))
+    }
 }

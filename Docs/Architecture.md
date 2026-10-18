@@ -128,8 +128,9 @@ work. Invalid elements and permanent errors do not retry. Unsupported optional
 attributes are not transient failures.
 
 SkyLight remains authoritative for window identity and Space membership. Additional
-WindowServer layer/bounds metadata and AX main/fullscreen/parent facts filter empty
-surfaces, child windows and non-main elevated windows. Floating/system-dialog
+WindowServer layer/bounds/parent metadata and AX main/fullscreen/parent facts filter empty
+surfaces, child windows and non-main elevated windows. A nonzero SkyLight parent WID
+rejects AppKit child windows that AX lists as top-level, such as Chromium's find bar. Floating/system-dialog
 subroles are excluded; ordinary custom window subroles remain eligible. No per-app
 blacklist or alternate focus path is introduced.
 
