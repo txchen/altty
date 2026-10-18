@@ -1,32 +1,19 @@
-# Altty 0.2.0
+# Altty 0.2.1
 
-Control the pointer from your keyboard with the new Mouse Mode, including places
-where keyboard hints cannot reach.
+This release fixes two window-switching bugs.
 
-## Mouse Mode
+## Fixes
 
-- Enter and exit with a shortcut you choose in Settings.
-- Hold **WASD** to move. Hold **U** for precise movement or **I** to move faster.
-- Press **J** for a left click or **K** for a right click. Stay in Mouse Mode
-  after clicking, ready for the next action.
-- Press **F**, then type a hint label to move directly to an element. This only
-  moves the pointer; press **J** or **K** when you want to click.
-- Press **Esc** to return from hints, then **Esc** again to exit. Your recorded
-  Mouse Mode shortcut exits directly from either state.
-
-Mouse Mode is off by default. Enable it in **Settings → General**, then record
-**Toggle Mouse Mode** in **Settings → Shortcuts**. It needs Accessibility access.
-Dragging and keyboard scrolling are not included in this release.
-
-## A quieter menu bar indicator
-
-Altty keeps its familiar stacked-card icon. The front card turns blue while Mouse
-Mode is active and returns to monochrome when you exit. There is no floating
-instruction panel; the controls are listed in Settings. The menu bar icon is
-also better aligned and uses less horizontal space.
-
-Standalone keyboard hints retain their existing select-then-Return-to-click
-behavior. Window switching and mouse wheel reversal work as before.
+- **No more duplicate browser windows.** With the find bar open in Brave,
+  Chrome or another Chromium browser, the switcher listed the browser twice.
+  Choosing the extra entry showed "Unable to switch to that window". Child
+  windows such as the find bar no longer appear in the list.
+- **A quick Option-Tab switches reliably.** Sometimes the switcher started on
+  the window you were already in, so a quick press did nothing and the list
+  opened with the current app selected. This happened when focus had moved to
+  a browser find bar, or to the overlay of a menu bar utility such as
+  MonitorControl. Altty now always starts from the frontmost app's window and
+  selects the next one.
 
 ## Install or update
 
@@ -47,6 +34,6 @@ brew upgrade --cask altty
 open /Applications/Altty.app
 ```
 
-You can also download `Altty-0.2.0-arm64.zip` from this release and move
+You can also download `Altty-0.2.1-arm64.zip` from this release and move
 **Altty.app** to **Applications**. Grant Accessibility access if macOS asks.
 Mouse wheel reversal additionally needs Input Monitoring access.
