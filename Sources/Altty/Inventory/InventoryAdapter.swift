@@ -117,6 +117,9 @@ enum InventoryEvent: Equatable, Sendable {
     case semanticsInvalidated(WindowIdentity)
     case semanticsChanged(WindowIdentity, WindowSemanticPatch)
     case workspaceChanged(WorkspaceApplicationEvent)
+    // Re-read identities whose AX read ended without facts (e.g. a busy app after
+    // wake exhausted the retries). nil covers every process.
+    case retryUnresolvedSemantics(pid: ProcessID?)
     case clear
 }
 
@@ -218,6 +221,10 @@ private struct WindowRecord: Equatable, Sendable {
         hasReceivedSemantics = true
     }
 
+    var isUnresolved: Bool {
+        hasReceivedSemantics && role.value == nil && !role.isStale
+    }
+
     var isSwitchable: Bool {
         guard role.value == "AXWindow", !role.isStale,
               isTransient.value == false, !isTransient.isStale else { return false }
@@ -290,6 +297,12 @@ actor WindowInventory: InventoryAdapter {
             apply(event)
             reorderColdStartIfNeeded()
             return []
+        case let .retryUnresolvedSemantics(pid):
+            let unresolved = records.values
+                .filter { $0.isUnresolved && (pid == nil || $0.identity.pid == pid) }
+                .map(\.identity)
+                .sorted { $0.wid < $1.wid }
+            return requestEnrichment(for: unresolved)
         case .clear:
             generation &+= 1
             activeSpaceIDs = []

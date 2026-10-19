@@ -664,7 +664,7 @@ final class SwitcherEngine {
             true
         case .workspaceChanged(.terminated):
             true
-        case .focused, .semanticsInvalidated, .semanticsChanged,
+        case .focused, .semanticsInvalidated, .semanticsChanged, .retryUnresolvedSemantics,
              .workspaceChanged(.snapshot), .workspaceChanged(.launched),
              .workspaceChanged(.hidden), .workspaceChanged(.activated):
             false

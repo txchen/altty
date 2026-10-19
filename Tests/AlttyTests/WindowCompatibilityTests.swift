@@ -27,6 +27,38 @@ extension WindowCompatibilityTests {
         #expect(accepts(3, main: false, subrole: "AXStandardWindow", fullscreen: true))
     }
 
+    @Test func exhaustedAccessibilityReadsRecoverOnRetry() async {
+        let inventory = WindowInventory()
+        let mail = WindowIdentity(wid: 10, pid: 100, generation: 1)
+        let other = WindowIdentity(wid: 20, pid: 200, generation: 1)
+        let enriched = await inventory.apply(.replaceActiveSpace(WindowServerSnapshot(
+            activeSpaceIDs: [1],
+            windows: [
+                .init(wid: 10, pid: 100, frontToBackOrder: 0),
+                .init(wid: 20, pid: 200, frontToBackOrder: 1),
+            ]
+        )))
+        #expect(enriched == [mail, other])
+        // A busy app after wake: retries ran out without any AX facts.
+        var exhausted = WindowSemanticPatch.unavailable
+        exhausted.readFailure = .temporarilyUnavailable
+        _ = await inventory.apply(.semanticsChanged(mail, exhausted))
+        _ = await inventory.apply(.semanticsChanged(other, exhausted))
+        #expect(await inventory.snapshot().windows.isEmpty)
+
+        #expect(await inventory.apply(.retryUnresolvedSemantics(pid: 100)) == [mail])
+        // Already pending: a second trigger does not duplicate the read.
+        #expect(await inventory.apply(.retryUnresolvedSemantics(pid: nil)) == [other])
+        _ = await inventory.apply(.semanticsChanged(mail, WindowSemanticPatch(
+            title: .value("Inbox"), role: .value("AXWindow"), subrole: .value("AXStandardWindow"),
+            isMinimized: .value(false), isFullscreen: .value(false), isTransient: .value(false),
+            isMain: .value(true), parentWindowID: .value(0)
+        )))
+        #expect(await inventory.snapshot().windows.map(\.identity) == [mail])
+        // Resolved and pending identities are not read again.
+        #expect(await inventory.apply(.retryUnresolvedSemantics(pid: nil)) == [])
+    }
+
     @Test func windowServerChildWindowsAreNotSwitchTargets() {
         // Chromium's find bar: a level-0 child of the browser window that AX lists as top-level.
         let identity = WindowIdentity(wid: 2996, pid: 100, generation: 1)

@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shortcutInvocationTask: Task<Void, Never>?
     private var shortcutCleanupTask: Task<Void, Never>?
     private var switcherPanelTask: Task<Void, Never>?
+    private var sessionResumeTask: Task<Void, Never>?
     private var shortcutPerformance = ShortcutPerformanceTracker()
 
     init(environment: AppEnvironment) {
@@ -73,11 +74,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil
         )
+        // didWake arrives before the display and unlock; applications are often too
+        // busy then for AX reads to finish, so resume unresolved reads afterwards.
+        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(
+                self, selector: #selector(sessionDidResume), name: name, object: nil
+            )
+        }
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(sessionDidResume),
+            name: Notification.Name("com.apple.screenIsUnlocked"), object: nil
+        )
         handle(.launch)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        DistributedNotificationCenter.default().removeObserver(self)
+        sessionResumeTask?.cancel()
         shortcutInvocationTask?.cancel()
         shortcutCleanupTask?.cancel()
         switcherPanelTask?.cancel()
@@ -567,6 +581,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             guard self.isMonitoringInventory, self.inventoryObservationRevision == revision else { return }
             self.run(await self.environment.engine.receiveInventory(.workspaceChanged(event)))
+            // Activation is the cheapest sign that the owner responds again.
+            if case let .activated(pid) = event {
+                guard self.isMonitoringInventory, self.inventoryObservationRevision == revision else { return }
+                self.run(await self.environment.engine.receiveInventory(.retryUnresolvedSemantics(pid: pid)))
+            }
         }
         switch event {
         case .launched, .terminated:
@@ -604,6 +623,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self.environment.accessibility.enrichments(for: group) { [weak self] identity, patch in
                     guard let self, self.isMonitoringInventory, self.inventoryRefresh.isCurrent(revision),
                           self.inventoryObservationRevision == observationRevision else { return }
+                    if let failure = patch.readFailure {
+                        InventoryDiagnostics.record("enrich_failed wid=\(identity.wid) pid=\(identity.pid) failure=\(failure)")
+                    }
                     self.run(await self.environment.engine.receiveInventory(.semanticsChanged(identity, patch)))
                 }
             }
@@ -669,6 +691,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func systemDidWake() { handle(.systemDidWake) }
+
+    /// Display wake or unlock: reconcile, then retry unresolved reads now and once
+    /// more after a busy wake period. One-shot, so no idle polling remains.
+    @objc private func sessionDidResume() {
+        sessionResumeTask?.cancel()
+        sessionResumeTask = Task { [weak self] in
+            for delay in [0, 3_000] {
+                do { try await Task.sleep(for: .milliseconds(delay)) } catch { return }
+                guard let self, self.isMonitoringInventory else { return }
+                let revision = self.inventoryObservationRevision
+                if delay == 0 { self.scheduleInventoryRefresh(.reconcile) }
+                InventoryDiagnostics.record("session_resumed retry_after_ms=\(delay)")
+                let effects = await self.environment.engine.receiveInventory(
+                    .retryUnresolvedSemantics(pid: nil)
+                )
+                guard self.isMonitoringInventory, self.inventoryObservationRevision == revision else { return }
+                self.run(effects)
+            }
+            self?.sessionResumeTask = nil
+        }
+    }
     @objc private func workspaceDidActivateApplication() {
         refreshUnobservedFrontmostApplication()
         refreshPresentation()

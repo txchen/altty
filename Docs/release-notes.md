@@ -1,19 +1,18 @@
-# Altty 0.2.1
+# Altty 0.2.2
 
-This release fixes two window-switching bugs.
+This release fixes windows that went missing from the switcher after waking
+your Mac.
 
 ## Fixes
 
-- **No more duplicate browser windows.** With the find bar open in Brave,
-  Chrome or another Chromium browser, the switcher listed the browser twice.
-  Choosing the extra entry showed "Unable to switch to that window". Child
-  windows such as the find bar no longer appear in the list.
-- **A quick Option-Tab switches reliably.** Sometimes the switcher started on
-  the window you were already in, so a quick press did nothing and the list
-  opened with the current app selected. This happened when focus had moved to
-  a browser find bar, or to the overlay of a menu bar utility such as
-  MonitorControl. Altty now always starts from the frontmost app's window and
-  selects the next one.
+- **All windows return after sleep.** After opening the lid or waking the Mac,
+  the switcher could list only one or two windows. The others came back only
+  after you clicked them. macOS hides window details from apps while the screen
+  is locked, and Altty did not read them again after you unlocked. It now does
+  this on unlock and on display wake.
+- **Busy apps recover by themselves.** If an app is too slow to respond when
+  Altty first reads its windows, Altty reads them again the next time you
+  switch to that app.
 
 ## Install or update
 
@@ -34,6 +33,6 @@ brew upgrade --cask altty
 open /Applications/Altty.app
 ```
 
-You can also download `Altty-0.2.1-arm64.zip` from this release and move
+You can also download `Altty-0.2.2-arm64.zip` from this release and move
 **Altty.app** to **Applications**. Grant Accessibility access if macOS asks.
 Mouse wheel reversal additionally needs Input Monitoring access.

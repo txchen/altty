@@ -125,7 +125,10 @@ AX enrichment retries only temporarily unavailable identities, at most three tim
 with 150/500/1000 ms backoffs. Backoff holds no query slot; successful patches publish
 immediately. Process exit, observation stop and inventory invalidation cancel pending
 work. Invalid elements and permanent errors do not retry. Unsupported optional
-attributes are not transient failures.
+attributes are not transient failures. An identity left without AX facts is
+read again when its application activates, and for all processes on display wake
+or session unlock, immediately and once 3 s later. Busy applications after wake
+can exceed the backoff window; there is still no idle polling.
 
 SkyLight remains authoritative for window identity and Space membership. Additional
 WindowServer layer/bounds/parent metadata and AX main/fullscreen/parent facts filter empty

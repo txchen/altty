@@ -25,6 +25,14 @@ enum ShortcutDiagnostics {
     }
 }
 
+/// Only window identities and failure categories; never titles.
+enum InventoryDiagnostics {
+    private static let logger = Logger(subsystem: "app.altty.macos", category: "Inventory")
+    static func record(_ message: @autoclosure () -> String) {
+        DiagnosticLogging.shared.record(message(), to: logger)
+    }
+}
+
 enum DiagnosticEvent: Equatable, Sendable {
     case accessibilityAvailable
     case accessibilityUnavailable
