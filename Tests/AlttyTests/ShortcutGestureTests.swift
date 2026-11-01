@@ -131,4 +131,48 @@ import Testing
         #expect(history.retainedCount == 0)
         #expect(history.claim(registration: 1) == nil)
     }
+
+    private func secureInputAdapter(
+        _ history: ShortcutGestureHistory,
+        secure: Bool = true
+    ) -> (SystemInputAdapter, RegisteredHotKey, () -> [ShortcutEvent]) {
+        let registrar = GestureRegistrar()
+        let input = SystemInputAdapter(registrar: registrar, usesSystemMonitors: false,
+                                       gestureHistory: history, isSecureInputEnabled: { secure })
+        var events: [ShortcutEvent] = []
+        input.install { events.append($0) }
+        _ = input.setShortcutsEnabled(true)
+        return (input, registrar.bindings[0], { events })
+    }
+
+    @Test func secureInputPressWithoutKeyDownIsTrackedByModifierState() {
+        let history = ShortcutGestureHistory()
+        let (input, key, events) = secureInputAdapter(history)
+        history.flagsChanged([.option], at: 10) // Secure Input: flags arrive, key-downs do not
+        #expect(input.hotKeyPressed(id: key.id))
+        #expect(input.hotKeyPressed(id: key.id))
+        history.flagsChanged([.option, .shift], at: 20)
+        input.modifiersChanged([.option, .shift])
+        history.flagsChanged([], at: 30)
+        input.modifiersChanged([])
+        #expect(events() == [.switcherPressed(.allWindows, .forward), .switcherPressed(.allWindows, .forward),
+                             .navigate(.backward), .holdModifiersReleased])
+    }
+
+    @Test func secureInputPressDelayedPastItsReleaseConfirmsImmediately() {
+        let history = ShortcutGestureHistory()
+        let (input, key, events) = secureInputAdapter(history)
+        history.flagsChanged([.option], at: 10)
+        history.flagsChanged([], at: 20)
+        #expect(input.hotKeyPressed(id: key.id))
+        #expect(events() == [.switcherPressed(.allWindows, .forward), .holdModifiersReleased])
+    }
+
+    @Test func unmatchedPressOutsideSecureInputIsStillRejected() {
+        let history = ShortcutGestureHistory()
+        let (input, key, events) = secureInputAdapter(history, secure: false)
+        history.flagsChanged([.option], at: 10)
+        #expect(!input.hotKeyPressed(id: key.id))
+        #expect(events().isEmpty)
+    }
 }

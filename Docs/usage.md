@@ -24,6 +24,15 @@ per-device identification; third-party drivers and unusual gesture settings
 still need hardware validation. License and attribution ship in the app's
 `Contents/Resources/ThirdParty/ScrollReverser` directory.
 
+## Password fields and Secure Input
+
+While a password field has focus, the app that owns it turns on Secure Input.
+On macOS 27, macOS then withholds every global shortcut that uses only Option or
+Option-Shift, including the default ⌥ Tab and ⌥ `, and the same shortcuts in other
+apps. Shortcuts that include Control or Command keep working. Click outside the
+password field to use ⌥ Tab again. If Option shortcuts stay unresponsive after you
+leave the field, the app that turned Secure Input on has not turned it off.
+
 ## Keyboard hints
 
 Hint Mode labels clickable elements so they can be clicked from the keyboard.

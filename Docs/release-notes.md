@@ -1,18 +1,22 @@
-# Altty 0.2.2
+# Altty 0.2.3
 
-This release fixes windows that went missing from the switcher after waking
-your Mac.
+This release keeps Altty's shortcuts working while another app uses Secure
+Input.
 
 ## Fixes
 
-- **All windows return after sleep.** After opening the lid or waking the Mac,
-  the switcher could list only one or two windows. The others came back only
-  after you clicked them. macOS hides window details from apps while the screen
-  is locked, and Altty did not read them again after you unlocked. It now does
-  this on unlock and on display wake.
-- **Busy apps recover by themselves.** If an app is too slow to respond when
-  Altty first reads its windows, Altty reads them again the next time you
-  switch to that app.
+- **Shortcuts work while Secure Input is on.** Password fields, password
+  managers and some terminals turn on macOS Secure Input. While it was on,
+  Altty ignored even the shortcuts that macOS still delivered, such as ones
+  that use Control or Command. Altty now handles them, and releasing the held
+  modifiers still chooses the selected window.
+
+## Known limitation
+
+On macOS 27, macOS withholds global shortcuts that use only Option or
+Option-Shift while a password field has focus. This includes the default
+⌥ Tab and ⌥ `, and Option shortcuts in other apps. Altty cannot receive them
+until the field loses focus.
 
 ## Install or update
 
@@ -33,6 +37,6 @@ brew upgrade --cask altty
 open /Applications/Altty.app
 ```
 
-You can also download `Altty-0.2.2-arm64.zip` from this release and move
+You can also download `Altty-0.2.3-arm64.zip` from this release and move
 **Altty.app** to **Applications**. Grant Accessibility access if macOS asks.
 Mouse wheel reversal additionally needs Input Monitoring access.

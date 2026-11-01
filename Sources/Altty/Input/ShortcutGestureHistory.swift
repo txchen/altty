@@ -18,13 +18,19 @@ final class ShortcutGestureHistory: @unchecked Sendable {
     private var presses: [Press] = []
     private var sequence: UInt64 = 0
     private var previousModifiers: ShortcutModifiers = []
+    private var observedModifiers: ShortcutModifiers?
     private(set) var capacity = 128
 
     func configure(_ bindings: [RegisteredHotKey]) {
-        lock.withLock { self.bindings = bindings; presses.removeAll(); previousModifiers = [] }
+        lock.withLock {
+            self.bindings = bindings; presses.removeAll(); previousModifiers = []; observedModifiers = nil
+        }
     }
 
-    func reset() { lock.withLock { presses.removeAll(); previousModifiers = [] } }
+    func reset() { lock.withLock { presses.removeAll(); previousModifiers = []; observedModifiers = nil } }
+
+    /// Latest modifier state seen by the physical tap, or nil before the first change.
+    var currentModifiers: ShortcutModifiers? { lock.withLock { observedModifiers } }
 
     func keyDown(keyCode: UInt32, modifiers: ShortcutModifiers, isRepeat: Bool, at time: UInt64) {
         lock.withLock {
@@ -44,6 +50,7 @@ final class ShortcutGestureHistory: @unchecked Sendable {
         lock.withLock {
             let shiftPressed = modifiers.contains(.shift) && !previousModifiers.contains(.shift)
             previousModifiers = modifiers
+            observedModifiers = modifiers
             if shiftPressed, let index = presses.indices.last,
                presses[index].release == nil, presses[index].time <= time,
                !modifiers.intersection(presses[index].hold).isEmpty {

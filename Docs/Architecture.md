@@ -119,7 +119,11 @@ shortcut presses and their physical modifier releases. Carbon callbacks claim th
 records on main; all logical shortcut events share one ordered task chain. Completed
 gestures wait for a committed focus transaction to finish before starting another
 session. Tap loss clears history and disables shortcuts; stale monitor callbacks are
-rejected by generation. Ordinary typing is never retained.
+rejected by generation. Ordinary typing is never retained. Secure Input hides key-downs
+from the tap but not modifier changes, so while it is on a Carbon press without a
+record is accepted and released from the tap's latest modifier state; outside Secure
+Input an unrecorded press is still rejected. macOS 27 itself withholds Option-only and
+Option-Shift hotkeys while Secure Input is on, so those never reach Altty.
 
 AX enrichment retries only temporarily unavailable identities, at most three times
 with 150/500/1000 ms backoffs. Backoff holds no query slot; successful patches publish

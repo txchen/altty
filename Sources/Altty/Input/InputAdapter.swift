@@ -112,6 +112,7 @@ final class SystemInputAdapter: InputAdapter {
     private let gestureHistory: ShortcutGestureHistory?
     private var physicalMonitor: ShortcutPhysicalMonitor?
     private var physicalMonitorGeneration = UUID()
+    private let isSecureInputEnabled: () -> Bool
     private var activePhysicalPress: UInt64?
     private var shortcutIsActive = false
     private var previousModifiers: NSEvent.ModifierFlags = []
@@ -123,9 +124,11 @@ final class SystemInputAdapter: InputAdapter {
         registrar: any HotKeyRegistrar = CarbonHotKeyRegistrar(),
         shortcuts: ShortcutPair = .defaults,
         usesSystemMonitors: Bool = true,
-        gestureHistory: ShortcutGestureHistory? = nil
+        gestureHistory: ShortcutGestureHistory? = nil,
+        isSecureInputEnabled: @escaping () -> Bool = { IsSecureEventInputEnabled() }
     ) {
         self.registrar = registrar
+        self.isSecureInputEnabled = isSecureInputEnabled
         self.usesSystemMonitors = usesSystemMonitors
         self.gestureHistory = gestureHistory ?? (usesSystemMonitors ? ShortcutGestureHistory() : nil)
         self.configuredShortcuts = shortcuts.validationError == nil ? shortcuts : .defaults
@@ -292,7 +295,7 @@ final class SystemInputAdapter: InputAdapter {
             let monitor = ShortcutPhysicalMonitor(history: gestureHistory, onChange: { [weak self] in
                 Task { @MainActor [weak self] in
                     guard let self, self.physicalMonitorGeneration == generation else { return }
-                    self.confirmPhysicalRelease()
+                    self.physicalModifiersChanged()
                 }
             }, onFailure: { [weak self] in
                 Task { @MainActor [weak self] in
@@ -375,23 +378,55 @@ final class SystemInputAdapter: InputAdapter {
         // Drain the previous press before replacing its identity. A Carbon callback
         // can overtake the main-thread delivery of physical Shift changes.
         confirmPhysicalRelease()
+        var unordered = false
         if let gestureHistory {
-            guard let sequence = gestureHistory.claim(registration: id) else {
+            if let sequence = gestureHistory.claim(registration: id) {
+                activePhysicalPress = sequence
+            } else if isSecureInputEnabled() {
+                // Secure Input hides key-downs from the tap but not modifier changes,
+                // so this press is tracked by modifier state alone.
+                ShortcutDiagnostics.record("secure_input_press registration=\(id)")
+                activePhysicalPress = nil
+                unordered = true
+            } else {
                 ShortcutDiagnostics.record("unmatched_press registration=\(id)")
                 return false
             }
-            activePhysicalPress = sequence
         }
         shortcutIsActive = true
         previousModifiers = registration.binding.modifiers.eventFlags
         activeHoldModifiers = registration.binding.modifiers.intersection(.required)
         onEvent?(.switcherPressed(registration.mode, registration.direction))
-        confirmPhysicalRelease()
+        if unordered {
+            if let current = gestureHistory?.currentModifiers { applyModifierFlags(current.eventFlags) }
+        } else {
+            confirmPhysicalRelease()
+        }
         return true
     }
 
+    private func physicalModifiersChanged() {
+        if isTrackingUnorderedPress, let current = gestureHistory?.currentModifiers {
+            applyModifierFlags(current.eventFlags)
+        } else {
+            confirmPhysicalRelease()
+        }
+    }
+
+    /// A press accepted under Secure Input has no physical record to confirm against.
+    private var isTrackingUnorderedPress: Bool {
+        gestureHistory != nil && shortcutIsActive && activePhysicalPress == nil
+    }
+
     func modifiersChanged(_ flags: NSEvent.ModifierFlags) {
-        if gestureHistory != nil { confirmPhysicalRelease(); return }
+        if gestureHistory != nil {
+            if isTrackingUnorderedPress { applyModifierFlags(flags) } else { confirmPhysicalRelease() }
+            return
+        }
+        applyModifierFlags(flags)
+    }
+
+    private func applyModifierFlags(_ flags: NSEvent.ModifierFlags) {
         let shiftPressed = flags.contains(.shift) && !previousModifiers.contains(.shift)
         previousModifiers = flags
         if shortcutIsActive, shiftPressed,
