@@ -34,6 +34,7 @@ end
 
 source = run!("scripts/render-cask.sh", "1.2.3", SHA, "owner/repo")
 cask = CaskContract.new(source, "altty.rb")
+raise "macOS dependency must use symbol syntax" unless cask.values[:depends_on] == { macos: :sequoia }
 raise "Wrong default URL" unless cask.values[:url] == "https://github.com/owner/repo/releases/download/1.2.3/Altty-1.2.3-arm64.zip"
 local_url = "http://127.0.0.1:8765/Altty-1.2.3-arm64.zip"
 local = CaskContract.new(run!("scripts/render-cask.sh", "1.2.3", SHA, "owner/repo", local_url), "altty.rb")
