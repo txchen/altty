@@ -1,15 +1,11 @@
-# Altty 0.2.3
+# Altty 0.2.4
 
-This release keeps Altty's shortcuts working while another app uses Secure
-Input.
+This release fixes switching back to a window with an open modal sheet.
 
 ## Fixes
 
-- **Shortcuts work while Secure Input is on.** Password fields, password
-  managers and some terminals turn on macOS Secure Input. While it was on,
-  Altty ignored even the shortcuts that macOS still delivered, such as ones
-  that use Control or Command. Altty now handles them, and releasing the held
-  modifiers still chooses the selected window.
+- Altty now recognizes a focused sheet as part of its parent window. Apps such
+  as Paseo no longer report a failed switch when the sheet has focus.
 
 ## Known limitation
 
@@ -37,6 +33,6 @@ brew upgrade --cask altty
 open /Applications/Altty.app
 ```
 
-You can also download `Altty-0.2.3-arm64.zip` from this release and move
+You can also download `Altty-0.2.4-arm64.zip` from this release and move
 **Altty.app** to **Applications**. Grant Accessibility access if macOS asks.
 Mouse wheel reversal additionally needs Input Monitoring access.

@@ -475,6 +475,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.recordAdapterCall(.accessibility)
                 observed = await self.environment.accessibility.focusedWindow()
                 if observed == FocusedWindow(wid: identity.wid, pid: identity.pid) { break }
+                if let focused = observed, focused.pid == identity.pid {
+                    self.recordAdapterCall(.skyLight)
+                    let snapshot = await self.environment.windowServer.activeSpaceSnapshot()
+                    guard self.environment.engine.isCurrentFocusTransaction(transactionID) else { return }
+                    if WindowFocusExecutor.matches(observed, target: identity, snapshot: snapshot) {
+                        self.recordAdapterCall(.accessibility)
+                        observed = await self.environment.accessibility.focusedWindow()
+                        guard self.environment.engine.isCurrentFocusTransaction(transactionID) else { return }
+                        guard observed == focused else { continue }
+                        ShortcutDiagnostics.record("verify descendant target=\(identity.wid)/\(identity.pid) observed=\(focused.wid)/\(focused.pid)")
+                        observed = FocusedWindow(wid: identity.wid, pid: identity.pid)
+                        break
+                    }
+                }
             }
             self.receive(
                 .focusPostconditionObserved(observed),
